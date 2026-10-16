@@ -414,8 +414,9 @@ export function apply(ctx: Context): void {
 因此：
 
 1. **加入 preset 是卡片会话的成立条件，不是优化**。preset 在常驻作用域下组装一次，agent"加入"的方式是让它的作用域键 parent 到那个挂载点；**唯一受支持的调用点是 agent 工厂的 `setup(agentCtx)` 回调**——只有在那里组装尚未发布，preset 组装失败才能让整次创建回滚，而不是发布一个半组装的 agent。创建与恢复两条路径共用同一个 setup。
-2. **preset 在任何 agent 创建之前解析并预校验**（`resolve()` 取部署默认，`standingKeyFor()` 验组装）。失败**故意不被吞掉**：一个 preset 坏掉的部署同样给不了卡片会话写盘能力，诚实的答复是"那条配置坏了"，而不是开出一条默默干不了活的会话。
-3. **无 roster 的部署是 no-op 而非失败**：裸 harness、单测这类环境没有 `agentPresets` 服务，此时模型面向的工具行本来就留在宿主组装里、全局层人人可见，没有可加入的东西。服务按名结构读取（`ctx.get('agentPresets')`），同一份 bundle 同时跑在有 roster 与无 roster 两种部署下。
+2. **preset 在任何 agent 创建之前解析并预校验**（`resolve()` 取部署默认，它返回的 `broken` 就是组装诊断——非空即这条 preset 装不起来）。失败**故意不被吞掉**：一个 preset 坏掉的部署同样给不了卡片会话写盘能力，诚实的答复是"那条配置坏了"，而不是开出一条默默干不了活的会话。
+3. **这个面只许调用上游真发布过的成员**：`ctx.get('agentPresets')` 是**结构式**读取——类型系统看不见它，而判据里的假对象又常常是照猜出来的样子捏的，于是一个猜错的成员没有任何一层会拦，一路走到机器上变成 `face.X is not a function`。v1.0.3 就是这么栽的：预检里调用了一个**从未发布过**的 `standingKeyFor`，**所有部署上的全部卡片会话**都开不出来（issue #1）。纪律两条：① 每个成员都要能在上游自己的声明里逐字指出来（`@deepseek-ai/dsh-agent-preset-registry`，`lib/types/index.d.ts`），不从调用点「想要什么」倒推；② **判据里的假 roster 只能有真机有的成员**——比真机宽松的假对象，正是让这条错误在 20 条绿判据下活着的原因（顺带记一笔：`resolve()` 已经是 `mount()` 跑的那次审计，因此「这条 preset 能不能组装」不必另找一个调用去证明）。
+4. **无 roster 的部署是 no-op 而非失败**：裸 harness、单测这类环境没有 `agentPresets` 服务，此时模型面向的工具行本来就留在宿主组装里、全局层人人可见，没有可加入的东西。服务按名结构读取（`ctx.get('agentPresets')`），同一份 bundle 同时跑在有 roster 与无 roster 两种部署下。
 
 **卡片元信息注入系统提示词**：用 `ctx.systemPrompt.section()` / `.context()` / `.variable()` 在卡片会话的作用域内注册段落与动态上下文（路径、形态、项目风格档案、上游引用来源摘要、**改动归属**——一次改动落到本卡产物而不是另起一张卡，F3.17），作用域内条目遮蔽全局同名条目；一次性提醒走 `agent.inject({ content, source: { kind: 'plugin', plugin: 'dsh-canvas' } })`——它追加的是持久化上下文，下一次模型请求即可见，但**不会唤醒空闲 agent**。
 
