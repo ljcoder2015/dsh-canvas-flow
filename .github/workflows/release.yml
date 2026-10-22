@@ -1,0 +1,121 @@
+name: Release
+
+# 一次发布 = 一个 tag。本地 `pnpm release` 只负责 bump / CHANGELOG / 打 tag / push，
+# 真正的 publish 在这里做：干净环境 + 全量门禁 + npm provenance 签名，可复现、可追溯。
+# 手动触发用于重试（例如先打了 tag 才发现没配 NPM_TOKEN）。
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish, e.g. v1.0.4'
+        required: true
+        type: string
+
+# 同一个版本的发布绝不并发：并发 publish 会让后来的那个撞 "cannot publish over existing version"。
+concurrency:
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Verify and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # 建 GitHub Release
+      id-token: write # npm provenance（签名证明「这个包是这个 commit 构建的」）
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      # pnpm 版本不在 action 里写死：package.json 的 packageManager 字段是唯一真源。
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      # tag 与 package.json 的版本必须一致 —— 这是唯一能防住「v1.0.4 的 tag 发出 1.0.3 的包」的地方。
+      - name: Check tag matches package.json
+        id: pkg
+        run: |
+          set -euo pipefail
+          name=$(node -p "require('./package.json').name")
+          version=$(node -p "require('./package.json').version")
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::tag $TAG does not match package.json version $version"
+            exit 1
+          fi
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if npm view "$name@$version" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::$name@$version is already on npm — publish will be skipped"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Require NPM_TOKEN
+        if: steps.pkg.outputs.exists != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::secret NPM_TOKEN is not set. Add it under Settings → Secrets and variables → Actions, then re-run this workflow."
+            exit 1
+          fi
+
+      - name: Install
+        if: steps.pkg.outputs.exists != 'true'
+        run: pnpm install --frozen-lockfile
+
+      # 仓库自己的「可发布」判据，别在这里另写一套：tsc + tsc-tests + eslint + vitest + build + tsc-build。
+      - name: Gate (pnpm run check)
+        if: steps.pkg.outputs.exists != 'true'
+        run: pnpm run check
+
+      # --ignore-scripts：门禁刚跑过，不必让 prepare / prepublishOnly 再跑一遍（也省掉 CI 里对 pnpm 的二次依赖）。
+      # 预发布版本（1.0.4-rc.1）打到 next，绝不顶掉 latest。
+      - name: Publish to npm
+        if: steps.pkg.outputs.exists != 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          version='${{ steps.pkg.outputs.version }}'
+          dist_tag=latest
+          case "$version" in *-*) dist_tag=next ;; esac
+          npm publish --provenance --access public --tag "$dist_tag" --ignore-scripts
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "::notice::release $TAG already exists — leaving it as is"
+          else
+            gh release create "$TAG" --title "$TAG" --generate-notes --latest
+          fi
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### ${{ steps.pkg.outputs.name || 'dsh-canvas-flow' }}@${{ steps.pkg.outputs.version || '?' }}"
+            echo ""
+            echo "- tag: \`$TAG\`"
+            echo "- already on npm: \`${{ steps.pkg.outputs.exists }}\`"
+            echo "- https://www.npmjs.com/package/${{ steps.pkg.outputs.name }}/v/${{ steps.pkg.outputs.version }}"
+          } >> "$GITHUB_STEP_SUMMARY"
