@@ -199,8 +199,8 @@ dsh-canvas/
 **尚未落地的申报与不一致**（发布前需处理）：
 
 - `dsh.plugin.json` 的 `contributes.skills` 申报了 `canvas-operations`，`package.json` 的 `files` 也收了 `skills/`，但**该技能包与 `skills/` 目录当前都不存在**；要么补上，要么从两处申报里撤掉。
-- **CI 未落地**：仓库里没有 `.github/workflows/`，`check` 目前靠本地跑（见 §10）。
-- `package.json` 声明 `packageManager: pnpm@10.17.0`，但仓库里跟踪的是 `package-lock.json`（npm）、没有 `pnpm-lock.yaml`——本地按 npm 跑、发布路径按 pnpm，需择一。
+- **CI 已落地（2026-10-22）**：`.github/workflows/release.yml` 由 tag 触发，跑 `pnpm run check` 后用 `npm stage publish` 把版本送进 npm 的 stage 队列，再由维护者带 2FA 批准上线。见 §10。
+- **两个 lockfile 都在库里**：`pnpm-lock.yaml` 与 `package-lock.json` 同时被跟踪。`packageManager` 声明的是 pnpm，CI 也按 pnpm 冷装（`--frozen-lockfile` 已核过同步），npm 那份属历史遗留，清掉更干净。
 
 **拆分的判据**：`src/` 根只留**入口与协议基座**（零依赖、只被依赖），其余四层**依赖方向单向向下**——`host/` 依赖 `core/` 与协议，`core/` 谁都不依赖（它 import 到 `host/` 就是环），`client/` 自成一棵树。两个**构建入口路径刻意不动**，所以 `package.json` 的 `exports`、`dsh.plugin.json`、`cordis.patch.yml` 都不随目录调整而改动。
 
@@ -1425,7 +1425,11 @@ await build({ entryPoints: ['src/client/index.tsx'], outfile: 'lib/client.js', b
 | `pnpm run test`      | vitest                                                    |
 | `pnpm run check`     | typecheck → lint → test → build（CI 跑的就是它）                 |
 
-CI：**尚未落地**——仓库里还没有 `.github/workflows/`，`check` 目前靠本地跑。既定方案是 GitHub Actions + corepack + Node 22，`pnpm install --frozen-lockfile` 后执行 `pnpm run check`。
+CI：`.github/workflows/release.yml`，**由 tag 触发**（`v*`；另有 `workflow_dispatch` 供重试）。流程是 `pnpm install --frozen-lockfile` → `pnpm run check` → `npm stage publish`，Node 22 + `pnpm/action-setup`（版本读 `packageManager`），并把 npm CLI 显式升到 **≥ 11.15**——Node 22 自带的是 npm 10.x，`stage` 子命令在那里不存在。
+
+发布分两段，这是有意的：**CI 只提交审核，上线要人放行**。`npm stage publish` 把包送进 npm 的 stage 队列（不需要 2FA、任何 token 类型都行），维护者再用 `npm stage approve` 或 npmjs.com 的 Staged Packages 标签页带 2FA 批准，版本才真正可安装。因此 workflow 顺手建的是**草稿** Release——staged 版本此刻用户还装不到，发正式 Release 会指向一个不存在的版本；批准后再把草稿发出去。本地 `pnpm release`（release-it）只做 bump / CHANGELOG / 打 tag / push，`npm.publish` 保持 `false`。
+
+`npm stage` 的两个硬前提：npm CLI ≥ 11.15.0、Node ≥ 22.14，且**包必须已存在于 registry**（全新包走不了 staging，本包已在，无碍）。
 
 安装与调试：
 

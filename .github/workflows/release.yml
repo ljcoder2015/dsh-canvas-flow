@@ -1,7 +1,11 @@
 name: Release
 
 # 一次发布 = 一个 tag。本地 `pnpm release` 只负责 bump / CHANGELOG / 打 tag / push，
-# 真正的 publish 在这里做：干净环境 + 全量门禁 + npm provenance 签名，可复现、可追溯。
+# 真正的上传在这里做：干净环境 + 全量门禁 + npm provenance 签名，可复现、可追溯。
+#
+# 上传走**staged publishing**（npm CLI ≥ 11.15）：包先进 stage 队列，**不会立刻对用户可见**，
+# 必须由维护者带 2FA 批准才上线（`npm stage approve` 或 npmjs.com 的 Staged Packages）。
+# 也就是说：CI 负责「把东西做好并提交审核」，人负责「放行」。
 # 手动触发用于重试（例如先打了 tag 才发现没配 NPM_TOKEN）。
 
 on:
@@ -10,11 +14,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to publish, e.g. v1.0.4'
+        description: 'Tag to stage, e.g. v1.0.4'
         required: true
         type: string
 
-# 同一个版本的发布绝不并发：并发 publish 会让后来的那个撞 "cannot publish over existing version"。
+# 同一个版本的发布绝不并发：两个 stage 同时跑会留下两条待审记录。
 concurrency:
   group: release-${{ inputs.tag || github.ref_name }}
   cancel-in-progress: false
@@ -23,11 +27,11 @@ permissions:
   contents: read
 
 jobs:
-  publish:
-    name: Verify and publish
+  stage:
+    name: Verify and stage
     runs-on: ubuntu-latest
     permissions:
-      contents: write # 建 GitHub Release
+      contents: write # 建草稿 Release
       id-token: write # npm provenance（签名证明「这个包是这个 commit 构建的」）
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
@@ -40,13 +44,31 @@ jobs:
       # pnpm 版本不在 action 里写死：package.json 的 packageManager 字段是唯一真源。
       - uses: pnpm/action-setup@v4
 
+      # Node 22 自带的 npm 是 10.x，没有 `stage` 子命令；下面单独升到 11.15+。
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: pnpm
           registry-url: https://registry.npmjs.org
 
+      # 升 npm 同时把「staged publishing 的最低要求」钉在明面上：
+      # 少了这一步，`npm stage publish` 会退化成 "Unknown command"，而错误信息不会提到版本。
+      - name: Upgrade npm CLI for staged publishing
+        run: |
+          set -euo pipefail
+          npm install -g 'npm@^11.15.0'
+          have=$(npm --version)
+          # 取两者较小者：等于下界才算过。直接比 "是否已排序" 会把 11.9.0 也放过去。
+          lowest=$(printf '%s\n%s\n' "$have" '11.15.0' | sort -V | head -1)
+          if [ "$lowest" != '11.15.0' ]; then
+            echo "::error::npm $have is older than 11.15.0 — staged publishing is unavailable"
+            exit 1
+          fi
+          echo "npm $have (>= 11.15.0)"
+
       # tag 与 package.json 的版本必须一致 —— 这是唯一能防住「v1.0.4 的 tag 发出 1.0.3 的包」的地方。
+      # 注意 stage 队列里的版本**在批准前不会出现在 registry 上**，所以这里只能判「是否已上线」；
+      # 已在 stage 队列里再提交一次会被 npm 拒掉，那条错误本就是答案。
       - name: Check tag matches package.json
         id: pkg
         run: |
@@ -61,7 +83,7 @@ jobs:
           echo "version=$version" >> "$GITHUB_OUTPUT"
           if npm view "$name@$version" version >/dev/null 2>&1; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::$name@$version is already on npm — publish will be skipped"
+            echo "::notice::$name@$version is already live on npm — staging will be skipped"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
@@ -86,8 +108,9 @@ jobs:
         run: pnpm run check
 
       # --ignore-scripts：门禁刚跑过，不必让 prepare / prepublishOnly 再跑一遍（也省掉 CI 里对 pnpm 的二次依赖）。
-      # 预发布版本（1.0.4-rc.1）打到 next，绝不顶掉 latest。
-      - name: Publish to npm
+      # 预发布版本（1.0.4-rc.1）打到 next，绝不顶掉 latest —— 这一点 --tag 与 npm publish 同义。
+      # 提交完**不会**出现在 registry 上：要等人带 2FA 批准。
+      - name: Stage on npm
         if: steps.pkg.outputs.exists != 'true'
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
@@ -96,9 +119,11 @@ jobs:
           version='${{ steps.pkg.outputs.version }}'
           dist_tag=latest
           case "$version" in *-*) dist_tag=next ;; esac
-          npm publish --provenance --access public --tag "$dist_tag" --ignore-scripts
+          npm stage publish --provenance --access public --tag "$dist_tag" --ignore-scripts
 
-      - name: Create GitHub Release
+      # 草稿 Release：staged 版本还没上线，此刻发正式 Release 会指向一个用户装不到的版本。
+      # 批准后再在 GitHub 上把这份草稿发出去 —— 「npm 批准」与「Release 发布」是同一个人做的一件事。
+      - name: Create draft GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -106,16 +131,30 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "::notice::release $TAG already exists — leaving it as is"
           else
-            gh release create "$TAG" --title "$TAG" --generate-notes --latest
+            gh release create "$TAG" --draft --title "$TAG" --generate-notes
           fi
 
       - name: Summary
         if: always()
         run: |
+          name='${{ steps.pkg.outputs.name }}'
+          version='${{ steps.pkg.outputs.version }}'
           {
-            echo "### ${{ steps.pkg.outputs.name || 'dsh-canvas-flow' }}@${{ steps.pkg.outputs.version || '?' }}"
+            echo "### ${name:-dsh-canvas-flow}@${version:-?}"
             echo ""
             echo "- tag: \`$TAG\`"
-            echo "- already on npm: \`${{ steps.pkg.outputs.exists }}\`"
-            echo "- https://www.npmjs.com/package/${{ steps.pkg.outputs.name }}/v/${{ steps.pkg.outputs.version }}"
+            echo "- already live: \`${{ steps.pkg.outputs.exists }}\`"
+            echo ""
+            if [ "${{ steps.pkg.outputs.exists }}" = "true" ]; then
+              echo "Nothing to stage — this version is already live."
+            else
+              echo "**Staged, not live.** Approve it to publish:"
+              echo ""
+              echo '```'
+              echo "npm stage approve ${name}@${version}    # prompts for 2FA"
+              echo '```'
+              echo ""
+              echo "Or approve in the browser: https://www.npmjs.com/package/${name} → Staged Packages."
+              echo "Then publish the draft GitHub Release for \`$TAG\`."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
