@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.1.0](compare/v1.0.3...v1.1.0) (2026-10-22)
+
+### Features
+
+* 支持视频与音频生成，按领域重组目录结构 d50f2e8
+
+### Bug Fixes
+
+* 卡片会话的 preset 预检不再调用上游不存在的 standingKeyFor 3ccb100
+
 ## [1.0.3](https://github.com/ljcoder2015/dsh-canvas-flow/compare/v1.0.2...v1.0.3) (2026-10-09)
 
 ## [1.0.2](https://github.com/ljcoder2015/dsh-canvas/compare/v1.0.1...v1.0.2) (2026-10-08)
