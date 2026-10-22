@@ -6,7 +6,12 @@ name: Release
 # 上传走**staged publishing**（npm CLI ≥ 11.15）：包先进 stage 队列，**不会立刻对用户可见**，
 # 必须由维护者带 2FA 批准才上线（`npm stage approve` 或 npmjs.com 的 Staged Packages）。
 # 也就是说：CI 负责「把东西做好并提交审核」，人负责「放行」。
-# 手动触发用于重试（例如先打了 tag 才发现没配 NPM_TOKEN）。
+#
+# 凭据是 **OIDC（trusted publishing）**，没有任何长期 token：setup-node 的 id-token 让 CLI
+# 拿 GitHub 签的短时凭证跟 registry 换发布授权。npm 端要在包设置里把
+# ljcoder2015/dsh-canvas-flow 的 release.yml 配成 trusted publisher（Allowed actions 选
+# stage-only）。配错或没配，`npm stage publish` 会 401——先去包设置核对三个字段。
+# 手动触发用于重试。
 
 on:
   push:
@@ -32,7 +37,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write # 建草稿 Release
-      id-token: write # npm provenance（签名证明「这个包是这个 commit 构建的」）
+      id-token: write # OIDC：换短时发布凭证，也是 provenance 的签名身份
     env:
       TAG: ${{ inputs.tag || github.ref_name }}
     steps:
@@ -88,16 +93,17 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Require NPM_TOKEN
-        if: steps.pkg.outputs.exists != 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # setup-node 会往 ~/.npmrc 写一行 `_authToken=${NODE_AUTH_TOKEN}`；没有 token 时它是空值，
+      # 而空 authToken 可能盖过 npm 的 OIDC 环境检测（trusted publishing 要求鉴权前别有残留）。
+      # 公共 registry 的安装与发布都不需要那行，直接删掉。
+      - name: Clear placeholder authToken
         run: |
-          if [ -z "${NODE_AUTH_TOKEN:-}" ]; then
-            echo "::error::secret NPM_TOKEN is not set. Add it under Settings → Secrets and variables → Actions, then re-run this workflow."
-            exit 1
+          if [ -f ~/.npmrc ]; then
+            sed -i '/_authToken/d' ~/.npmrc
+            cat ~/.npmrc
           fi
 
+      # 凭据到此为止都还没建立：Install 与 Gate 只读公共 registry，不需要鉴权。
       - name: Install
         if: steps.pkg.outputs.exists != 'true'
         run: pnpm install --frozen-lockfile
@@ -110,10 +116,9 @@ jobs:
       # --ignore-scripts：门禁刚跑过，不必让 prepare / prepublishOnly 再跑一遍（也省掉 CI 里对 pnpm 的二次依赖）。
       # 预发布版本（1.0.4-rc.1）打到 next，绝不顶掉 latest —— 这一点 --tag 与 npm publish 同义。
       # 提交完**不会**出现在 registry 上：要等人带 2FA 批准。
+      # 401 = npm 端的 trusted publisher 没配或字段对不上（owner / repo / workflow 文件名，区分大小写）。
       - name: Stage on npm
         if: steps.pkg.outputs.exists != 'true'
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           version='${{ steps.pkg.outputs.version }}'

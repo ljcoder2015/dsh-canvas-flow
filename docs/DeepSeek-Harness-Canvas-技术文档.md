@@ -1431,6 +1431,8 @@ CI：`.github/workflows/release.yml`，**由 tag 触发**（`v*`；另有 `workf
 
 `npm stage` 的两个硬前提：npm CLI ≥ 11.15.0、Node ≥ 22.14，且**包必须已存在于 registry**（全新包走不了 staging，本包已在，无碍）。
 
+凭据走 **OIDC（trusted publishing），仓库里没有任何长期 token**：job 带 `id-token: write`，npm CLI 自动拿 GitHub 签的短时凭证换发布授权。npm 端需要一次性配置——包设置 → Trusted publishing → GitHub Actions，填 `ljcoder2015` / `dsh-canvas-flow` / `release.yml`（大小写敏感），Allowed actions 选 **stage-only**（配 staged 的推荐姿势）。另外 setup-node 会往 `~/.npmrc` 写一个空的 `_authToken` 占位行，可能盖过 OIDC 检测，workflow 里在安装前把它删掉。npm 要求 CLI ≥ 11.5.1；与 staged 的 11.15 门槛取交集仍是 ≥ 11.15。配好后还可以在包设置里开「Require two-factor authentication and disallow tokens」——token 门关死，只剩 OIDC + 2FA 两条路。
+
 安装与调试：
 
 ```sh
