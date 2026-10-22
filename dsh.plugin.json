@@ -2,7 +2,7 @@
   "id": "dsh-canvas-flow",
   "version": "1.0.2",
   "main": "lib/index.js",
-  "description": "在画布上，搭出你的工作流 —— 跑在 DeepSeek Harness 上的无限画布插件",
+  "description": "Build your workflow on an infinite canvas — text, design, app, image and video cards wired together on DeepSeek Harness.",
   "engines": {
     "dsh": ">=0.2.0-rc.2"
   },
