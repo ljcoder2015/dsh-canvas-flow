@@ -76,6 +76,26 @@ const cardRecord = z.object({
    * derivation and the rule that a name equal to it is not stored at all.
    */
   name: z.string().optional(),
+  /**
+   * 这张卡**由哪个模型生成**（F2.7）：图片卡 / 视频卡 / 音频卡上那颗下拉框选的就是它。
+   *
+   * 与 `name` 同一条可选纪律：`undefined` 读作「没单独选过」，也就是此前一直的行为
+   * （交给配置里第一个对得上模型族的模型），所以老记录一张都不用迁。
+   *
+   * 它**不是**会话模型。会话用哪个模型说话归会话自己（宿主的 `model/selection`），
+   * 两者一旦共用一个字段，就会出现「给视频卡选了生成模型，会话也跟着换，下一次请求
+   * 400」——那正是 v1.73 / v1.75 反复踩的那件事。
+   */
+  mediaModel: z.string().optional(),
+  /**
+   * 产物的真实宽高比（宽 ÷ 高，F3.11）。有它，媒体卡就按图的比例坐，而不是一律 16:9。
+   *
+   * 由**浏览器**测出来再写回来（`card/setAspect`）：解码一张图 / 一段视频的宽高，
+   * 浏览器是最可靠的那个解码器，宿主去解析 PNG / JPEG / WebP / MP4 的容器头等于把同一
+   * 件事再实现一遍，还只认得自己实现过的那几种。测不到就不写——`undefined` 读作
+   * 「还不知道比例」，卡片按默认 16:9 坐，老记录一张都不用迁。
+   */
+  aspect: z.number().optional(),
 })
 
 /** One source edge: `downstream` builds on `upstream` (F4.1, F4.3). */

@@ -46,6 +46,8 @@ export const TOOL_NAMES = {
   organizeBoard: 'canvas_organize_board',
   linkSourceOnBoard: 'canvas_link_source_on_board',
   generateImage: 'canvas_generate_image',
+  generateVideo: 'canvas_generate_video',
+  generateAudio: 'canvas_generate_audio',
   designRead: 'canvas_design_read',
   designEdit: 'canvas_design_edit',
   export: 'canvas_export',
@@ -118,6 +120,19 @@ export const boardCardSchema = z
     position: pointSchema,
     sessionId: z.string(),
     missing: z.boolean(),
+    /**
+     * 这张卡**由哪个模型生成**（F2.7），空 = 交给配置里第一个对得上族的模型。
+     *
+     * 可选，且与 `seatedEmpty` 同一条纪律：老记录读出来是 `undefined`，意思就是
+     * 「没单独选过」——正是它们此前的行为，所以一张卡都不用迁。
+     */
+    mediaModel: z.string().max(200).optional(),
+    /**
+     * 产物的真实宽高比（宽 ÷ 高，F3.11），空 = 还不知道、按默认 16:9 坐。
+     *
+     * 与 `mediaModel` 同一条纪律：可选，老记录读出来是 `undefined`，意思就是「还没量过」。
+     */
+    aspect: z.number().positive().max(100).optional(),
   })
   .readonly()
 /** One source edge as the board renders it. */
@@ -419,6 +434,28 @@ const P = {
   prompt: json('prompt', 'prompt', 'dsh-canvas-flow#PromptText', z.string().trim().min(1).max(32_000)),
   file: json('file', 'file', 'dsh-canvas-flow#CardFile', cardFileSchema),
   cardName: json('name', 'name', 'dsh-canvas-flow#CardName', z.string().max(120)),
+  /**
+   * 卡片选定的生成模型 id（F2.7）。空串是**合法入参**，意思是「回到自动挑」——
+   * 所以这里不能加 `.min(1)`：那会让「取消选择」变成一次协议层报错。
+   */
+  mediaModel: json('model', 'model', 'dsh-canvas-flow#MediaModel', z.string().max(200)),
+  /**
+   * 产物的真实宽高比（宽 ÷ 高）。上限 100 / 必须为正：这不是给用户填的字段，是浏览器
+   * 量出来后回写的，界外值只可能是算错了——在协议层拒绝，比让它把卡片撑成一条线好。
+   */
+  aspect: json('aspect', 'aspect', 'dsh-canvas-flow#MediaAspect', z.number().positive().max(100)),
+  /**
+   * 导入的文件名（含扩展名）。路径只取 basename、扩展名必须是媒体——两条判据都在
+   * `core/canvas/import-plan.ts` 里，这里只卡长度（一段文件名长过 200 字符不是文件名）。
+   */
+  importName: json('name', 'name', 'dsh-canvas-flow#ImportName', z.string().trim().min(1).max(200)),
+  /**
+   * 导入文件的字节，base64 编码。
+   *
+   * 上限按「搬运上限的编码长度」给：16MB × 4/3 ≈ 21.3MB，多留一点余量。协议层先拦一道，
+   * 是为了不让一段离谱的字符串走进宿主再被拒——那一段已经被分配出来了。
+   */
+  fileData: json('content', 'content', 'dsh-canvas-flow#ImportBytes', z.string().max(21_400_000)),
   version: json('version', 'version', 'dsh-canvas-flow#FsVersion', z.string().min(1).max(200)),
   designOps: json('ops', 'ops', 'dsh-canvas-flow#DesignOps', z.array(designOpSchema).min(1).max(200)),
   style: json('style', 'style', 'dsh-canvas-flow#StyleProfile', styleProfileSchema),
@@ -564,6 +601,18 @@ export const DSH_CANVAS_INVOCATIONS: readonly InvocationDescriptor[] = [
     invocation: { kind: 'direct' }, parameters: [P.projectId, P.cardId, P.cardName], cancellation: signal, result: R.card,
   },
   {
+    id: 'dsh-canvas-flow#card/set_media_model', service: 'card', namespace: 'card', method: 'setMediaModel',
+    invocation: { kind: 'direct' }, parameters: [P.projectId, P.cardId, P.mediaModel], cancellation: signal, result: R.card,
+  },
+  {
+    id: 'dsh-canvas-flow#card/set_aspect', service: 'card', namespace: 'card', method: 'setAspect',
+    invocation: { kind: 'direct' }, parameters: [P.projectId, P.cardId, P.aspect], cancellation: signal, result: R.card,
+  },
+  {
+    id: 'dsh-canvas-flow#card/import_artifact', service: 'card', namespace: 'card', method: 'importArtifact',
+    invocation: { kind: 'direct' }, parameters: [P.projectId, P.cardId, P.importName, P.fileData], cancellation: signal, result: R.card,
+  },
+  {
     id: 'dsh-canvas-flow#card/remove_card', service: 'card', namespace: 'card', method: 'removeCard',
     invocation: { kind: 'direct' }, parameters: [P.projectId, P.cardId], cancellation: signal, result: R.boolean,
   },
@@ -686,5 +735,20 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
      * The reason travels as text because the set grows with the refusal cases.
      */
     'card/rename-refused': { readonly cardId: string; readonly name: string; readonly reason: string }
+    /**
+     * 一次导入被拒（F2.7，v1.81）：不是媒体扩展名、超过搬运上限、或者是个空文件。
+     *
+     * 三种都是**答案**而不是故障（用户换一个文件、压小一点、或者挑错了），所以理由
+     * 作为 `reason` 原样带出来，界面按它说三种不同的话。与 `card/rename-refused`
+     * 同一条纪律：理由的集合会长，枚举写死在协议里迟早漏一种。
+     */
+    'card/import-refused': { readonly cardId: string; readonly name: string; readonly reason: string }
+    /**
+     * 导入的载荷不是一段合法的 base64（F2.7，v1.81）。
+     *
+     * 这是**调用方写错了**，不是用户做错了什么：客户端的 `readBase64` 只会给出合法的
+     * 一段。单独一个码，是为了让它与「被拒」在日志里分得开——一个要改代码，一个要换文件。
+     */
+    'card/import-malformed': { readonly length: number }
   }
 }

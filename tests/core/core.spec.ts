@@ -5,8 +5,8 @@
  * geometry or a graph bug, and both are cheap to pin down exactly.
  */
 import { describe, expect, it } from 'vitest'
-import { CARD_HEIGHT, CARD_WIDTH, arrangeSeats, depthsOf, nextFreeSeat } from '../../src/core/canvas/board.ts'
-import { projectIdOf, shortDigest, slugify } from '../../src/core/canvas/ids.ts'
+import { CARD_HEIGHT, CARD_WIDTH, arrangeSeats, depthsOf, nextFreeSeat } from '../../src/core/canvas/board/board.ts'
+import { projectIdOf, shortDigest, slugify } from '../../src/core/canvas/card/ids.ts'
 import {
   BUILTIN_KINDS,
   DESIGN_KINDS,
@@ -21,7 +21,7 @@ import {
   kindSupportsExport,
   outlineOf,
   resolveKindId,
-} from '../../src/core/artifact/kind-registry.ts'
+} from '../../src/core/artifact/kind/kind-registry.ts'
 import {
   materialUpstreams,
   reconcileEdges,
@@ -29,7 +29,7 @@ import {
   sourceIdOf,
   transitiveUpstreams,
   validateEdge,
-} from '../../src/core/canvas/source-store.ts'
+} from '../../src/core/canvas/board/source-store.ts'
 import type { CardId, Source } from '../../src/types.ts'
 
 /** One edge, as the store keeps it. */

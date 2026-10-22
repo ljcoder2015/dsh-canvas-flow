@@ -276,7 +276,7 @@ describe('与上游对账：越界判定是复刻来的', () => {
 })
 
 describe('接线：只有 PPT 那条路夹，且在交出去之前', () => {
-  const io = read('../../../../src/client/artifact/viewers/design-io.ts')
+  const io = read('../../../../src/client/artifact/viewers/design/design-io.ts')
 
   it('pptx 分支里调到它', () => {
     const branch = /default: \{[\s\S]*?return await perPage\(/.exec(io)?.[0] ?? ''

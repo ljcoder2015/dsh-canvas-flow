@@ -333,6 +333,40 @@ export class CanvasBridge {
     return unwrap(this.card.removeCard(projectId, cardId, this.signal))
   }
 
+  /**
+   * 记下这张卡**由哪个模型生成**（F2.7）；空串回到「自动挑」。
+   *
+   * 这是媒体卡那颗下拉框的落点——它**不碰会话**：那张卡用哪个模型说话是另一件事
+   * （`selectModel` 那条通路），两者共用一次写入就会退回到「选个视频模型把会话弄崩」。
+   */
+  setMediaModel(projectId: string, cardId: string, model: string): Promise<BoardCard> {
+    return unwrap(this.card.setMediaModel(projectId, cardId, model, this.signal))
+  }
+
+  /**
+   * 记下产物真实的宽高比（F3.11）。
+   *
+   * 调用方是卡面自己：媒体产物一加载完，浏览器就把它的宽高解出来了（`naturalWidth`
+   * ／ `videoWidth`），比宿主去解析 PNG / JPEG / WebP / MP4 的容器头可靠得多——那是
+   * 把浏览器已经做过一遍的事再做一遍，还只认得自己实现过的那几种格式。
+   *
+   * 只写这一张卡的占位，产物一个字节都不动；比例没变就别调（每次板面刷新都会跑一次）。
+   */
+  setAspect(projectId: string, cardId: string, aspect: number): Promise<BoardCard> {
+    return unwrap(this.card.setAspect(projectId, cardId, aspect, this.signal))
+  }
+
+  /**
+   * 把本地选中的一个文件导入成这张卡的产物（F2.7）。
+   *
+   * 字节是 base64 走的：浏览器没有别的通道能把一个本地文件交给宿主（`File` 只有名字与
+   * 字节，没有路径）。所以**上限在调用方先判**（`import-plan.ts` 的 `IMPORT_MAX_BYTES`），
+   * 别让一个一百兆的视频先编码、再传输、最后被宿主拒掉。
+   */
+  importArtifact(projectId: string, cardId: string, name: string, content: string): Promise<BoardCard> {
+    return unwrap(this.card.importArtifact(projectId, cardId, name, content, this.signal))
+  }
+
   /** Take every card whose artifact is gone off the board. Files stay. */
   removeMissingCards(projectId: string): Promise<number> {
     return unwrap(this.card.removeMissingCards(projectId, this.signal))

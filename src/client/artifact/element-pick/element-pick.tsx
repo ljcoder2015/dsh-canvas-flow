@@ -45,12 +45,12 @@ import {
   placePickBox,
   type PickRect,
   type PickTarget,
-} from '../../../core/artifact/preview-picker.ts'
+} from '../../../core/artifact/kind/preview-picker.ts'
 import type { ArtifactView } from '../../../types.ts'
-import type { PromptFold } from '../../../core/artifact/prompt-blocks.ts'
+import type { PromptFold } from '../../../core/artifact/prompt/prompt-blocks.ts'
 import type { ArtifactChrome } from '../chrome.tsx'
-import { PromptInput } from '../../ui/prompt-input.tsx'
-import type { PromptInputHandle } from '../../ui/prompt-input.tsx'
+import { PromptInput } from '../../ui/prompt/prompt-input.tsx'
+import type { PromptInputHandle } from '../../ui/prompt/prompt-input.tsx'
 import { dropPending, pendingKey, readPending, writePending } from './pending.ts'
 
 /** 选中的元素，加上弹窗要围着它画的那些东西。 */

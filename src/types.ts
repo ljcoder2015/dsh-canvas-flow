@@ -78,6 +78,10 @@ export interface Card {
    * file and the kind.
    */
   name?: string
+  /** 这张卡由哪个模型生成（F2.7）；空 = 交给配置里第一个对得上族的模型。 */
+  mediaModel?: string
+  /** 产物的真实宽高比（宽 ÷ 高，F3.11）；空 = 还不知道，媒体卡按默认 16:9 坐。 */
+  aspect?: number
   /** Epoch millis of the last observed write, used for staleness hints. */
   updatedAt: number
 }
@@ -144,6 +148,21 @@ export interface BoardCard {
    * than accused of something nobody knows.
    */
   missing: boolean
+  /**
+   * 这张卡由哪个模型生成（F2.7）。空 = 没单独选过，交给配置里第一个对得上族的模型。
+   *
+   * 只有媒体卡会用到它；它**不是**会话模型——那张卡用哪个模型说话是会话自己的事
+   * （`sessionId` 那条通路上）。两者刻意不共用一个字段：共用了就会出现「给视频卡选了
+   * 生成模型，会话也跟着换，下一次请求 400」那件事。
+   */
+  mediaModel?: string
+  /**
+   * 产物的真实宽高比（宽 ÷ 高，F3.11）。有它，这张卡就按产物的比例坐——一张 1:1 的图
+   * 不该塞进 16:9 的框里左右留白，一段 9:16 的竖视频也不该被压成横的。
+   *
+   * 空 = 还不知道（还没生成、或还没在浏览器里加载过），按默认 16:9 坐。
+   */
+  aspect?: number
 }
 
 /** One source edge as the board renders it. */
@@ -267,6 +286,22 @@ export interface WriteResult {
   version: string
   /** Content before the write; `null` when the artifact did not exist. */
   before: string | null
+}
+
+/**
+ * Outcome of one media generation run (F2.7).
+ *
+ * 与 {@link WriteResult} 一样是「一份答案而不是一个异常」：宿主里的一句失败
+ * （`ok: false` + `reason`）必须原样走到画布上，因为画布的执行壳只接异常——把失败抛出去
+ * 的结果是**按钮点了什么都不发生**，而不是一句可读的话。
+ */
+export interface GenerationResult {
+  cardId: CardId
+  ok: boolean
+  /** Absolute path of the artifact that was written; `''` on failure. */
+  path: string
+  /** Why it did not happen, in the user's language; `''` on success. */
+  reason: string
 }
 
 /**

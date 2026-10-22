@@ -17,7 +17,7 @@ import type { ArtifactView } from '../../../types.ts'
 import type { Translate } from '../../ui/locales.ts'
 
 /** The viewer ids the registry can hand out — stable strings, testable pure. */
-export type ViewerId = 'markdown' | 'image' | 'deck' | 'data' | 'video' | 'text' | 'design'
+export type ViewerId = 'markdown' | 'image' | 'deck' | 'data' | 'video' | 'audio' | 'text' | 'design'
 
 /** Props every kind viewer receives. 其余的一切（桥、插槽、归属）走 `useChrome()`。 */
 export interface ViewerProps {

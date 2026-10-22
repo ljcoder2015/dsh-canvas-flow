@@ -90,7 +90,7 @@ await build({
  * 标 external 让打包通过，浏览器里永远执行不到。
  */
 await build({
-  entryPoints: ['src/client/artifact/viewers/design-engine.ts'], outfile: 'lib/assets/design-engine.js',
+  entryPoints: ['src/client/artifact/viewers/design/design-engine.ts'], outfile: 'lib/assets/design-engine.js',
   bundle: true, format: 'esm', platform: 'browser', target: ['es2022'], sourcemap: true,
   // core 的 editor 分支有 node 才走的动态 import（本地字体访问等），两种写法
   // 都出现：`node:fs` 与裸 `fs`。标 external 让打包通过，浏览器里永远执行不到。

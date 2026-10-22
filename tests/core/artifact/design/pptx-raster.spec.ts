@@ -373,7 +373,7 @@ describe('收口：夹 + 烘之后，上游那条「整页退图」的闸解开'
 })
 
 describe('接线：只有 PPT 那条路烘，且在交出去之前', () => {
-  const io = read('../../../../src/client/artifact/viewers/design-io.ts')
+  const io = read('../../../../src/client/artifact/viewers/design/design-io.ts')
 
   it('pptx 分支里调到它', () => {
     const branch = /default: \{[\s\S]*?return await perPage\(/.exec(io)?.[0] ?? ''

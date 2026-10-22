@@ -81,6 +81,20 @@ export interface CardFace {
   editDesign(projectId: string, cardId: string, ops: unknown[], signal?: AbortSignal): Promise<RemoteResult<DesignEditResultWire>>
   /** Rename a card (F1.12): the artifact moves with the name, and the card comes back as it now is. */
   renameCard(projectId: string, cardId: string, name: string, signal?: AbortSignal): Promise<RemoteResult<BoardCard>>
+  /**
+   * 记下这张卡由哪个模型生成（F2.7）；空串回到「自动挑」。
+   *
+   * 与 `renameCard` 同一类：改卡片记录上的一个字段，回改完之后的卡。
+   */
+  setMediaModel(projectId: string, cardId: string, model: string, signal?: AbortSignal): Promise<RemoteResult<BoardCard>>
+  setAspect(projectId: string, cardId: string, aspect: number, signal?: AbortSignal): Promise<RemoteResult<BoardCard>>
+  /**
+   * 把本地选中的一个文件导入成这张卡的产物（F2.7）。
+   *
+   * `content` 是 base64：浏览器手里只有字节，没有路径——这是本机唯一的一条通道，所以
+   * 上限（`IMPORT_MAX_BYTES`）在客户端先判一次，别让几十兆走完 wire 再被拒。
+   */
+  importArtifact(projectId: string, cardId: string, name: string, content: string, signal?: AbortSignal): Promise<RemoteResult<BoardCard>>
   removeCard(projectId: string, cardId: string, signal?: AbortSignal): Promise<RemoteResult<boolean>>
   removeMissingCards(projectId: string, signal?: AbortSignal): Promise<RemoteResult<number>>
   readSummary(projectId: string, cardId: string, signal?: AbortSignal): Promise<RemoteResult<CardSummary>>
@@ -151,6 +165,9 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'card/readDesign': CardFace['readDesign']
     'card/editDesign': CardFace['editDesign']
     'card/removeCard': CardFace['removeCard']
+    'card/setMediaModel': CardFace['setMediaModel']
+    'card/setAspect': CardFace['setAspect']
+    'card/importArtifact': CardFace['importArtifact']
     'card/removeMissingCards': CardFace['removeMissingCards']
     'card/readSummary': CardFace['readSummary']
     'card/readArtifact': CardFace['readArtifact']

@@ -22,8 +22,9 @@ import type { ContentBlock } from '@deepseek-ai/dsh-llm'
 import type { CardSummary, ExportFormat, ReferencedFiles, SourceChain } from '../types.ts'
 import { TOOL_NAMES } from '../contract.ts'
 import type { DesignOpInput } from '../core/artifact/design/ops.ts'
-import type { CanvasRuntime } from './canvas-runtime.ts'
-import type { CardRuntime } from './card-runtime.ts'
+import { referenceFor, referenceNote } from '../core/media/reference.ts'
+import type { CanvasRuntime } from './runtime/canvas-runtime.ts'
+import type { CardRuntime } from './runtime/card-runtime.ts'
 import type { SessionManager } from '../core/session/session-manager.ts'
 import type { CanvasDomain } from '../domain.ts'
 
@@ -37,6 +38,10 @@ export interface ToolDeps {
 
 /** Render blocks for one line-oriented text answer. */
 const text = (value: string): ContentBlock[] => [{ type: 'text', text: value }]
+
+/** 参数里的可选字符串：空白与「没给」等价，免得下游再判一次。 */
+const optionalText = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
 
 /** The canonical summary shape every summary-returning tool declares. */
 const SUMMARY_PROPERTIES = {
@@ -573,10 +578,137 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
   ctx.tools.register(
     defineTool({
       name: TOOL_NAMES.generateImage,
-      description: '为某张图片卡片生成画面。prompt 描述要什么，cardId 指定写进哪张卡片（卡片 id）。',
+      description:
+        '为某张图片卡片生成画面。prompt 描述要什么，cardId 指定写进哪张卡片（卡片 id）。引用进来的图片会自动当作参考图（图生图）；也可以用它自己的 referenceCardId 点名另一张。',
       parameters: {
         prompt: { type: 'string', description: '画面描述', required: true },
         cardId: { type: 'string', description: '目标图片卡片 id', required: true },
+        referenceCardId: {
+          type: 'string',
+          description: '用哪张卡的产物当参考图。省略则自动用引用进这张卡的第一张图片；画布上没连引用就是纯文生图',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' },
+            path: { type: 'string' },
+            reason: { type: 'string' },
+            note: { type: 'string' },
+          },
+          additionalProperties: false,
+        },
+        render: (_args, value) => {
+          const result = value as { ok: boolean; path: string; reason: string; note: string }
+          if (!result.ok) return text(`生图未完成：${result.reason}`)
+          return text(result.note === '' ? `已生成：${result.path}` : `已生成：${result.path}（${result.note}）`)
+        },
+      },
+      async execute(args, exec) {
+        const projectId = activeProject(exec)
+        const board = await deps.canvas.readBoard(projectId, exec.signal)
+        const cardId = String(args.cardId)
+        // **引用要真的送进请求**：画布上连了一条边，就是「把这张图当材料」，而这句话只有
+        // 在参考图进了 `image` 字段时才兑现。此前这里写死 `undefined`，于是连线只出现在
+        // 提示词里、从来没进过生成请求（用户看到的是「模型没照参考图来」）。
+        const reference = referenceFor(board.cards, board.sources, cardId, optionalText(args.referenceCardId))
+        const result = await deps.card.generateImage(
+          board.project,
+          cardId,
+          String(args.prompt),
+          reference.status === 'found' ? reference.file : undefined,
+          exec.signal,
+        )
+        return {
+          ok: result.ok,
+          path: result.path,
+          reason: result.reason,
+          note: referenceNote(reference) ?? '',
+        }
+      },
+    }),
+  )
+
+  ctx.tools.register(
+    defineTool({
+      name: TOOL_NAMES.generateVideo,
+      description:
+        '为某张视频卡片生成一段片子。prompt 描述画面与运镜；ratio / duration / resolution 是可选参数，不给则用模型自己的默认。引用进来的图片会自动当首帧（图生视频）；referenceRole 可改成 reference_image 当参考图。生成是异步任务，会等到成片为止。',
+      parameters: {
+        prompt: { type: 'string', description: '画面与运镜描述', required: true },
+        cardId: { type: 'string', description: '目标视频卡片 id', required: true },
+        ratio: { type: 'string', description: '画面比例，如 16:9 / 9:16 / 1:1 / adaptive' },
+        duration: { type: 'number', description: '片长（秒）。按秒计费，所以不说就交给模型默认，别自己猜' },
+        resolution: { type: 'string', description: '分辨率，如 480p / 720p / 1080p' },
+        referenceCardId: {
+          type: 'string',
+          description: '用哪张卡的产物当参考图。省略则自动用引用进这张卡的第一张图片；画布上没连引用就是纯文生视频',
+        },
+        referenceRole: {
+          type: 'string',
+          description: '参考图的角色：first_frame（默认，让这张图动起来）、last_frame（首尾帧的尾帧）、reference_image（参考图）',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' },
+            path: { type: 'string' },
+            reason: { type: 'string' },
+            note: { type: 'string' },
+          },
+          additionalProperties: false,
+        },
+        render: (_args, value) => {
+          const result = value as { ok: boolean; path: string; reason: string; note: string }
+          if (!result.ok) return text(`生视频未完成：${result.reason}`)
+          return text(result.note === '' ? `已生成：${result.path}` : `已生成：${result.path}（${result.note}）`)
+        },
+      },
+      async execute(args, exec) {
+        const projectId = activeProject(exec)
+        const board = await deps.canvas.readBoard(projectId, exec.signal)
+        const cardId = String(args.cardId)
+        const reference = referenceFor(board.cards, board.sources, cardId, optionalText(args.referenceCardId))
+        const result = await deps.card.generateVideo(
+          board.project,
+          cardId,
+          {
+            prompt: String(args.prompt),
+            ...(typeof args.ratio === 'string' ? { ratio: args.ratio } : {}),
+            ...(typeof args.duration === 'number' ? { duration: args.duration } : {}),
+            ...(typeof args.resolution === 'string' ? { resolution: args.resolution } : {}),
+            ...(reference.status === 'found' ? { referencePath: reference.file } : {}),
+            ...(typeof args.referenceRole === 'string' && args.referenceRole.trim() !== ''
+              ? { referenceRole: args.referenceRole.trim() }
+              : {}),
+          },
+          exec.signal,
+        )
+        return {
+          ok: result.ok,
+          path: result.path,
+          reason: result.reason,
+          note: referenceNote(reference) ?? '',
+        }
+      },
+    }),
+  )
+
+  ctx.tools.register(
+    defineTool({
+      name: TOOL_NAMES.generateAudio,
+      description:
+        '为某张音频卡片生成一段音频（对白、音效、配乐、环境声都可以）。prompt 用自然语言描述要生成什么声音；要念出来的台词也可以直接写在里面。音频生成需要部署配了可用的音频模型。',
+      parameters: {
+        prompt: {
+          type: 'string',
+          description: '要生成什么声音：自然语言描述（可含多角色对白、音效、配乐），也可直接是要念出来的台词',
+          required: true,
+        },
+        cardId: { type: 'string', description: '目标音频卡片 id', required: true },
       },
       output: {
         schema: {
@@ -586,18 +718,16 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
         },
         render: (_args, value) => {
           const result = value as { ok: boolean; path: string; reason: string }
-          return text(result.ok ? `已生成：${result.path}` : `生图未完成：${result.reason}`)
+          return text(result.ok ? `已生成：${result.path}` : `生音频未完成：${result.reason}`)
         },
       },
       async execute(args, exec) {
         const projectId = activeProject(exec)
         const board = await deps.canvas.readBoard(projectId, exec.signal)
-        const cardId = String(args.cardId)
-        const result = await deps.card.generateImage(
+        const result = await deps.card.generateAudio(
           board.project,
-          cardId,
-          String(args.prompt),
-          undefined,
+          String(args.cardId),
+          { prompt: String(args.prompt) },
           exec.signal,
         )
         return { ok: result.ok, path: result.path, reason: result.reason }

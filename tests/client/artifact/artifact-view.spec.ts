@@ -12,8 +12,8 @@
  * 钉住的理由相同——坏掉的时候不报错，只是画错。
  */
 import { describe, expect, it } from 'vitest'
-import { BUILTIN_KINDS, DIRECT_TEXT_KINDS, HTML_KINDS, detectKind, isDirectTextKind } from '../../../src/core/artifact/kind-registry.ts'
-import { VIEW_TEXT_CAP, mediaMimeOf } from '../../../src/core/artifact/artifact-io.ts'
+import { BUILTIN_KINDS, DIRECT_TEXT_KINDS, HTML_KINDS, detectKind, isDirectTextKind } from '../../../src/core/artifact/kind/kind-registry.ts'
+import { VIEW_TEXT_CAP, mediaMimeOf } from '../../../src/core/artifact/io/artifact-io.ts'
 import { artifactViewSchema } from '../../../src/contract.ts'
 import { VIEWER_REGISTRY, viewerIdFor } from '../../../src/client/artifact/registry.ts'
 import { claimFirst } from '../../../src/client/artifact/chrome-stack.ts'

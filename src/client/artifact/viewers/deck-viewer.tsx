@@ -42,14 +42,14 @@
  * 它是锚，而锚不能是快照。
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { isHtmlKind } from '../../../core/artifact/kind-registry.ts'
+import { isHtmlKind } from '../../../core/artifact/kind/kind-registry.ts'
 import {
   isPickEscape,
   pickMode,
   pickOrder,
   readsPick,
-} from '../../../core/artifact/preview-picker.ts'
-import { PREVIEW_CHANNEL } from '../../../core/artifact/webapp.ts'
+} from '../../../core/artifact/kind/preview-picker.ts'
+import { PREVIEW_CHANNEL } from '../../../core/artifact/kind/webapp.ts'
 import { Slot, useChrome, useEscapeLayer, useEscapeSink } from '../chrome.tsx'
 import { useElementPick } from '../element-pick/element-pick.tsx'
 import type { ViewerProps, ViewerRegistration } from './types.ts'

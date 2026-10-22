@@ -29,7 +29,7 @@ import { createPortal } from 'react-dom'
 import type { ReactElement, ReactNode, RefObject } from 'react'
 import type { ArtifactView } from '../../types.ts'
 import type { Translate } from '../ui/locales.ts'
-import type { ModelBridge } from '../ui/model-picker.tsx'
+import type { ModelBridge } from '../ui/model/model-picker.tsx'
 import { claimFirst, type Claim } from './chrome-stack.ts'
 
 /**

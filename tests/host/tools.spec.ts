@@ -71,19 +71,30 @@ interface Harness {
   tools: Map<string, ToolDefinition>
   /** Project ids the board was read for, in call order. */
   boards: string[]
+  /** 每一次生成拿到的参考图（按调用顺序），以及视频那一路的完整 options。 */
+  generated: { image: (string | undefined)[]; video: Record<string, unknown>[] }
 }
 
 /**
  * Install the tools over fakes.
  *
  * @param options - `activeProject` is the domain global's slot; `card` is the
- *   card session the caller resolves to, absent for a plain conversation.
+ *   card session the caller resolves to, absent for a plain conversation;
+ *   `board` is what `readBoard` answers (the empty one by default).
  * @returns the registered tools and the calls they made.
  */
-function harness(options: { activeProject?: string; card?: { project: string; cardId: string } } = {}): Harness {
+function harness(
+  options: {
+    activeProject?: string
+    card?: { project: string; cardId: string }
+    board?: BoardSnapshot
+  } = {},
+): Harness {
   const tools = new Map<string, ToolDefinition>()
   const boards: string[] = []
+  const generated: Harness['generated'] = { image: [], video: [] }
   const card = options.card
+  const board = options.board
 
   const deps = {
     domain: {
@@ -98,7 +109,7 @@ function harness(options: { activeProject?: string; card?: { project: string; ca
     canvas: {
       readBoard: async (projectId: string): Promise<BoardSnapshot> => {
         boards.push(projectId)
-        return boardOf(projectId)
+        return board ?? boardOf(projectId)
       },
       arrange: async (projectId: string): Promise<BoardSnapshot> => {
         boards.push(projectId)
@@ -176,7 +187,20 @@ function harness(options: { activeProject?: string; card?: { project: string; ca
       createCard: async (): Promise<BoardCard> => CARD,
       scaffoldWebapp: async (): Promise<BoardCard> => ({ ...CARD, id: 'site/index.html' }),
       scaffoldDesign: async (): Promise<BoardCard> => ({ ...CARD, id: 'untitled.design', kind: 'design' }),
-      generateImage: async () => ({ ok: true, path: '/tmp/flow-test/hero.png', reason: '' }),
+      generateImage: async (
+        _project: unknown,
+        _cardId: unknown,
+        _prompt: unknown,
+        referencePath?: string,
+      ) => {
+        generated.image.push(referencePath)
+        return { ok: true, path: '/tmp/flow-test/hero.png', reason: '' }
+      },
+      generateVideo: async (_project: unknown, _cardId: unknown, videoOptions: Record<string, unknown>) => {
+        generated.video.push(videoOptions)
+        return { ok: true, path: '/tmp/flow-test/clip.mp4', reason: '' }
+      },
+      generateAudio: async () => ({ ok: true, path: '/tmp/flow-test/voice.mp3', reason: '' }),
       exportCard: async () => ({ ok: true, path: '/tmp/flow-test/deck.pdf', reason: '' }),
       publishCard: async () => ({ ok: true, path: 'https://deck.example.test', reason: '' }),
     },
@@ -198,7 +222,7 @@ function harness(options: { activeProject?: string; card?: { project: string; ca
   }
 
   registerTools(ctx as unknown as Context, deps as unknown as ToolDeps)
-  return { tools, boards }
+  return { tools, boards, generated }
 }
 
 /** One tool call's identity: which session is asking. */
@@ -219,6 +243,8 @@ const ARGS: Record<string, unknown> = {
   [TOOL_NAMES.createOnBoard]: { type: 'note', content: '决策：封面用横版' },
   [TOOL_NAMES.linkSourceOnBoard]: { from: 'brief.md', to: 'deck.html' },
   [TOOL_NAMES.generateImage]: { prompt: 'a cover', cardId: 'hero.png' },
+  [TOOL_NAMES.generateVideo]: { prompt: '镜头缓缓拉出', cardId: 'clip.mp4', ratio: '16:9', duration: 5 },
+  [TOOL_NAMES.generateAudio]: { prompt: '雨夜便利店，两个人压低声音争吵', cardId: 'voice.mp3' },
   [TOOL_NAMES.designRead]: {},
   [TOOL_NAMES.designEdit]: {
     ops: [{ kind: 'upsert', type: 'rect', x: 10, y: 10, width: 120, height: 80, fill: '#6B4226' }],
@@ -262,8 +288,79 @@ describe('canvas tools — declared output', () => {
   })
 })
 
-describe('canvas tools — which project a board-wide call answers for', () => {
-  it('falls back to the calling card\'s project when no canvas is recorded', async () => {
+/** 一张坐好的卡（只写这个判据读到的栏）。 */
+const seated = (id: string, file: string, kind: string): BoardCard => ({
+  id,
+  file,
+  name: file.replace(/\.[^./]+$/, ''),
+  project: PROJECT.id,
+  kind,
+  kindLabel: kind,
+  position: { x: 0, y: 0 },
+  sessionId: '',
+  missing: false,
+})
+
+/**
+ * 一张「视频引用了图片」的画布 —— 用户报障里那张（`视频.mp4 ← 图片.png`）。
+ *
+ * 画布上还坐着一张 `source.mp4`，用来验「点名一张不是图片的卡」。
+ */
+const REFERENCED_BOARD: BoardSnapshot = {
+  project: PROJECT,
+  cards: [seated('img1', '图片.png', 'image'), seated('clip', '视频.mp4', 'video'), seated('other', '另一段.mp4', 'video')],
+  sources: [{ id: 's1', downstream: 'clip', upstream: 'img1', origin: 'manual' }],
+  notes: [],
+}
+
+/**
+ * 引用真的进了生成请求（v1.74）。
+ *
+ * 这是那条 400 背后的另一半：**画布上连了线，但参考图从来没进过请求**。`generateImage`
+ * 的第 4 个参数写死 `undefined`，`generateVideo` 的 options 里根本没有这一栏——于是
+ * 「引用一张图去生成」在界面上连得上、在请求里不存在。用户看到的是一张没照参考图来的图，
+ * 而这件事**不会报错**。
+ */
+describe('canvas tools — 引用即参考图', () => {
+  it('视频卡引用了一张图片：那张图作为 referencePath 交给生成', async () => {
+    const h = harness({ board: REFERENCED_BOARD, activeProject: PROJECT.id })
+    const value = await h.tools
+      .get(TOOL_NAMES.generateVideo)
+      ?.execute({ prompt: '镜头缓缓拉出', cardId: 'clip', ratio: '16:9', duration: 5 }, exec('cv-1'))
+    expect(h.generated.video[0]).toMatchObject({ referencePath: '图片.png' })
+    // 没点名角色就不写：服务端按首帧处理，那是「让这张图动起来」的默认读法。
+    expect(h.generated.video[0]).not.toHaveProperty('referenceRole')
+    expect((value as { note: string }).note).toBe('')
+  })
+
+  it('没有引用的卡照旧纯文生图——不替它编一张参考图', async () => {
+    const h = harness({ board: REFERENCED_BOARD, activeProject: PROJECT.id })
+    const args = { prompt: '一只鲸鱼', cardId: 'img1' }
+    await h.tools.get(TOOL_NAMES.generateImage)?.execute(args, exec('cv-1'))
+    expect(h.generated.image[0]).toBeUndefined()
+  })
+
+  it('referenceCardId 点名压过引用自动挑的那张', async () => {
+    const board: BoardSnapshot = { ...REFERENCED_BOARD, cards: [...REFERENCED_BOARD.cards, seated('img2', '参考.png', 'image')] }
+    const h = harness({ board, activeProject: PROJECT.id })
+    await h.tools
+      .get(TOOL_NAMES.generateImage)
+      ?.execute({ prompt: 'p', cardId: 'img1', referenceCardId: 'img2' }, exec('cv-1'))
+    expect(h.generated.image[0]).toBe('参考.png')
+  })
+
+  it('点名了一张不是图片的卡：不给参考图，但要说出来', async () => {
+    const h = harness({ board: REFERENCED_BOARD, activeProject: PROJECT.id })
+    const value = await h.tools
+      .get(TOOL_NAMES.generateVideo)
+      ?.execute({ prompt: '镜头缓缓拉出', cardId: 'clip', referenceCardId: 'other' }, exec('cv-1'))
+    expect(h.generated.video[0]).not.toHaveProperty('referencePath')
+    // 安静地用不上，用户会以为「模型没照我的图来」。
+    expect((value as { note: string }).note).toContain('other')
+  })
+})
+
+describe('canvas tools — which project a board-wide call answers for', () => {  it('falls back to the calling card\'s project when no canvas is recorded', async () => {
     const h = harness({ card: { project: PROJECT.id, cardId: 'app/index.html' } })
     await h.tools.get(TOOL_NAMES.readBoard)?.execute({}, exec('cv-9'))
     expect(h.boards).toEqual([PROJECT.id])

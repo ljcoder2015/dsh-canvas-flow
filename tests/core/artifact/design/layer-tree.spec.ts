@@ -140,7 +140,7 @@ describe('不改入参（面板把它们塞在 setState 里，旧状态得留着
  * 也不拿「同文件别处恰好还有一行一样的」兜住一条已经坏掉的接线。
  */
 describe('接线：默认折叠真的接在面板上', () => {
-  const panel = read('../../../../src/client/artifact/viewers/design-panels.tsx')
+  const panel = read('../../../../src/client/artifact/viewers/design/design-panels.tsx')
 
   it('初始状态是「新节点全折叠」，不是空集合（空集合 = 全展开）', () => {
     expect(panel).toMatch(/^\s*withNewNodesCollapsed\(snapshot\.layers, emptyCollapse\(\)\),$/m)
@@ -164,7 +164,7 @@ describe('接线：默认折叠真的接在面板上', () => {
   })
 
   it('状态来自本模块（面板自己不再手搓 Set）', () => {
-    expect(panel).toContain("from '../../../core/artifact/design/layer-tree.ts'")
+    expect(panel).toMatch(/from '(?:\.\.\/)+core\/artifact\/design\/layer-tree\.ts'/)
     expect(panel).not.toMatch(/new Set\(previous\)/)
   })
 })

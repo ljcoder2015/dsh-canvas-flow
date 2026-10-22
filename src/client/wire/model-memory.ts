@@ -24,6 +24,7 @@
  */
 import type { BoardCard, CardSummary } from '../../types.ts'
 import type { ModelCatalog } from './bridge.ts'
+import { isMediaModel } from '../../core/media/routes.ts'
 
 /** One provider/model pair, as the catalog and the selection projection name it. */
 export interface ModelChoice {
@@ -123,15 +124,35 @@ export function rememberModel(kind: string, choice: ModelChoice): void {
 /**
  * The remembered model for one node type, if the catalog still offers it.
  *
+ * 两条都要过：**目录里还有没有**（部署可能撤掉了这个 id），以及**它是不是这类卡该记的
+ * 那种模型**。第二条是这一版（v1.76）新增的分岔：
+ *
+ * - 对话卡（文本 / 设计 / 应用）只认**非**生成模型。v1.73 之前生成模型本来就在菜单里，
+ *   用户点过一次就会把那条记忆写下，而菜单上的过滤管不到记忆这条通路——下一次补种会
+ *   原样复现「新卡继承一个视频生成模型，下一次请求 400」。
+ * - 媒体卡（图片 / 视频 / 音频）**只认**生成模型。用户在这张卡上选的就是「用哪个模型
+ *   出图」，那次选择同样值得按类型记住：下一张图片卡默认还用同一个。
+ *
+ * 一个 `kind` 只可能是其中一边，所以这条分岔不会同时成立——它挡的是「两边都接受」那种
+ * 写法，那种写法会让每一张对话卡都有机会继承一个不能对话的模型。
+ *
  * @param kind - the node type key.
  * @param catalog - the loaded host catalog; absent means "cannot verify".
+ * @param options - `media: true` 表示这是媒体卡（只认生成模型）。
  * @returns the choice to apply, or `undefined` when there is nothing usable.
  */
-export function recallModel(kind: string, catalog: ModelCatalog | undefined): ModelChoice | undefined {
+export function recallModel(
+  kind: string,
+  catalog: ModelCatalog | undefined,
+  options?: { readonly media?: boolean },
+): ModelChoice | undefined {
   if (kind === '' || catalog === undefined) return undefined
   const remembered = readMemory()[kind]
   if (remembered === undefined) return undefined
   const group = catalog.groups.find((entry) => entry.id === remembered.provider)
   if (group === undefined) return undefined
-  return group.models.some((model) => model.id === remembered.model) ? remembered : undefined
+  const wanted = options?.media === true
+  return group.models.some((model) => model.id === remembered.model && isMediaModel(model.id) === wanted)
+    ? remembered
+    : undefined
 }

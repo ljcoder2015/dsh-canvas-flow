@@ -13,7 +13,7 @@
  * 纯模块（不碰 React、不碰宿主 UI 原语），所以它能在 node 里直接测：这张表的全部行为就是
  * 「记、读、丢」。
  */
-import type { PickRect, PickTarget } from '../../../core/artifact/preview-picker.ts'
+import type { PickRect, PickTarget } from '../../../core/artifact/kind/preview-picker.ts'
 
 /**
  * 记下来的是这一笔的全部，够重开时把画面摆回去。

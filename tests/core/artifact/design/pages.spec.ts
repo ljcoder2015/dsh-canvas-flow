@@ -30,7 +30,7 @@ import {
   documentBounds,
   fitTransform,
   paintDocument,
-} from '../../../../src/client/artifact/viewers/design-render.ts'
+} from '../../../../src/client/artifact/viewers/design/design-render.ts'
 
 /** 取一个必然存在的节点——判据里建的东西，取不到就是这一条自己写错了。 */
 function need<T>(value: T | undefined): T {
@@ -317,8 +317,8 @@ describe('渲染与贴合只算这一页', () => {
  * 也不拿「同文件别处恰好还有一行一样的」兜住一条已经坏掉的接线。
  */
 describe('页面管理落在面板与引擎上', () => {
-  const panelSource = read('../../../../src/client/artifact/viewers/design-panels.tsx')
-  const engineSource = read('../../../../src/client/artifact/viewers/design-engine.ts')
+  const panelSource = read('../../../../src/client/artifact/viewers/design/design-panels.tsx')
+  const engineSource = read('../../../../src/client/artifact/viewers/design/design-engine.ts')
 
   it('四个操作都在：新建在标题栏，复制/重命名/删除在行尾', () => {
     expect(panelSource).toMatch(/^\s*engine\.addPage\(\)$/m)

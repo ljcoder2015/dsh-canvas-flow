@@ -20,6 +20,8 @@
       "canvas_organize_board",
       "canvas_link_source_on_board",
       "canvas_generate_image",
+      "canvas_generate_video",
+      "canvas_generate_audio",
       "canvas_design_read",
       "canvas_design_edit",
       "canvas_export",

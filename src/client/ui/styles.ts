@@ -173,8 +173,11 @@ body[data-ds-dark-theme] .dsh-canvas-root{
    卡片的边框**：后代的背景画在祖先的边框之上（CSS 绘制顺序：祖先的边框先画，流内
    块级后代后画），而卡片按设计不能 overflow:hidden（两个引用端口悬在卡外）。左下、
    右下两角的边框整段消失就是这么来的——标题行没有底色，所以上两角安然无恙。 */
+/* 宽高是**兜底值**：真正的尺寸由 core/canvas/card-size.ts 的 cardSizeOf 以内联样式
+   给出（v1.79 起所有形态一样大，400×252）。这两个数只在样式表被单独阅读时有意义，
+   改尺寸请改那边——排位、锚点、命中矩形、取景都读它。 */
 .dsh-canvas-card{--dsh-card-r:8px;--dsh-card-inner-r:calc(var(--dsh-card-r) - 1px);
-  position:absolute;width:200px;height:140px;box-sizing:border-box;display:flex;flex-direction:column;
+  position:absolute;width:400px;height:252px;box-sizing:border-box;display:flex;flex-direction:column;
   border:1px solid var(--dsh-hairline);border-radius:var(--dsh-card-r);background:var(--dsh-card);user-select:none;
   transition:border-color .12s ease,background .12s ease}
 .dsh-canvas-card:hover{border-color:var(--dsh-mid)}
@@ -236,6 +239,19 @@ body[data-ds-dark-theme] .dsh-canvas-root{
 /* 帧按 2x 视口渲染再缩回 0.5：页面以两倍尺寸排版，缩下后文字仍然锐——这正是截图的清晰度。 */
 .dsh-canvas-card-frame iframe{display:block;width:200%;height:200%;border:0;pointer-events:none;
   transform:scale(.5);transform-origin:0 0}
+/* 媒体卡面（F2.7）：产物本身就是画面，所以它铺满预览区——与设计截图同一条破格（负边距抵掉
+   10px 左右与 8px 底），下缘两角继承卡片内圆角。图片与视频用 contain 而不是 cover：卡面
+   398×224（正好 16:9）而产物什么比例都有，裁掉一块的画面对「这是我生成的那一张」是一种欺骗。 */
+.dsh-canvas-card-media{display:block;width:calc(100% + 20px);height:calc(100% + 8px);margin:0 -10px -8px;
+  object-fit:contain;background:var(--dsh-soft);
+  border-bottom-left-radius:var(--dsh-card-inner-r);border-bottom-right-radius:var(--dsh-card-inner-r)}
+/* 音频没有画面：铺满只会得到一片空白，所以它是居中那一条播放器（与全屏预览同一条规矩）。
+   控件自己吃指针（见 media-face.ts 第 2 条），控件外面那圈空白不吃——点那里照旧选中卡片。 */
+.dsh-canvas-card-media-audio{display:flex;align-items:center;height:100%}
+.dsh-canvas-card-media-audio audio{width:100%}
+/* 卡面上的那句话（产物还没生成 / 文件过大）：与大纲行同一档字号，文案也与全屏预览同一批，
+   不在这里另说一套。 */
+.dsh-canvas-card-note{font:11px/16px var(--dsh-font);color:var(--dsh-fg-3)}
 .dsh-canvas-card-meta{font:10px/14px var(--dsh-mono);letter-spacing:.6px;color:var(--dsh-fg-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 状态点只剩左侧的实时卡片（tool-view.tsx）在用——画布卡片上那枚已经去掉：
    那边用流光说「在跑」，不再用灯。 */
@@ -359,6 +375,10 @@ body[data-ds-dark-theme] .dsh-canvas-root{
 .dsh-canvas-composer-materialzone .dsh-canvas-chipbtn{height:26px;padding:0 9px;font:14px/24px var(--dsh-font)}
 .dsh-canvas-menu.is-raised{position:absolute;left:0;bottom:28px;z-index:7;box-shadow:none}
 .dsh-canvas-composer-menuempty{display:block;padding:7px 10px;font:12px/18px var(--dsh-font);color:var(--dsh-fg-3);white-space:nowrap}
+/* 席位选了「媒体生成模型」时的那句提示（v1.73）。它是一句**可行动的警告**，不是状态：
+   换一个模型就好了，所以用告警色、允许多行（它比一行长）。 */
+.dsh-canvas-composer-menunote{display:block;max-width:240px;padding:7px 10px;font:11px/16px var(--dsh-font);color:var(--dsh-sunset);white-space:normal}
+.dsh-canvas-modelbtn[data-media-seat=true]{color:var(--dsh-sunset)}
 /* 材料行右上角那颗〔放大〕（⤢）**只有行内有**——它开合的是这条带子。放大态那颗
    〔缩小〕（⤡）不在这儿，它站在弹窗头部右上角（见下面的 .dsh-canvas-promptmodal-shrink）。 */
 .dsh-canvas-composer-corner{margin-left:auto}
@@ -521,6 +541,11 @@ body[data-ds-dark-theme] .dsh-canvas-root{
   font:10px/14px var(--dsh-mono);color:var(--dsh-fg-3)}
 .dsh-canvas-media{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto}
 .dsh-canvas-media img,.dsh-canvas-media video{max-width:100%;max-height:100%;object-fit:contain;border-radius:4px}
+/* 音频面板：一段音频没有画面，铺满只会得到一片空白，所以这里是**一列**——播放条
+   占满宽度、文件名在它下面。flex:0 0 auto 让这一列在面板中央按内容高度收拢。 */
+.dsh-canvas-media-audio{flex-direction:column;gap:10px;flex:0 0 auto}
+.dsh-canvas-media-audio audio{width:100%;min-width:280px}
+.dsh-canvas-media-label{color:var(--dsh-fg-3);font:12px/18px var(--dsh-font);max-width:100%;overflow-wrap:anywhere;text-align:center}
 /* 设计预览：viewer-body 的 flex 子元素（不是 absolute——那会逃到外层定位祖先、
    盖住头部）。画布手感在类里：grab 光标、触屏不滚动、canvas 绝对铺满。 */
 .dsh-canvas-design{flex:1 1 auto;min-height:0;position:relative;overflow:hidden;background:#e9ebef;touch-action:none;cursor:grab}
@@ -869,6 +894,11 @@ body[data-ds-dark-theme] .dsh-canvas-root{
    锚里绝对定位。宽度按内容撑（.dsh-canvas-menu 自己那 150px 下限够用），左缘与钮对齐。 */
 .dsh-canvas-pillmenu{position:relative;display:inline-flex;align-items:center}
 .dsh-canvas-pillmenu>.dsh-canvas-menu{position:absolute;left:0;top:30px;z-index:7}
+/* 〔导入〕那颗钮背后的原生文件选择框（F2.7，v1.81）：只用来接一次点击，不能占位。
+   用 display:none 而不是 hidden 属性——后者的「不显示」是 UA 样式里的 display:none，
+   宿主那套 [hidden]{display:block} 一类的重置会把它顶回来，于是胶囊里会多出一个原生
+   「选择文件」控件。它也不吃指针：点击永远从胶囊那枚钮发起。 */
+.dsh-canvas-fileinput{display:none}
 .dsh-canvas-zoombar{position:absolute;left:12px;bottom:12px;display:flex;flex-direction:row;align-items:center;gap:2px;padding:4px;border-radius:999px;
   border:1px solid var(--dsh-hairline);background:var(--dsh-card)}
 .dsh-canvas-iconbtn{display:flex;align-items:center;justify-content:center;width:28px;height:28px;border:none;border-radius:50%;

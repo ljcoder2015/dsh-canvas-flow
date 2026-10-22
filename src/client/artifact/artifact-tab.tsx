@@ -13,11 +13,11 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import type { InjectFace, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import { nextFreeSeat, type SeatInput } from '../../core/canvas/board.ts'
+import { nextFreeSeat, type SeatInput } from '../../core/canvas/board/board.ts'
 import type { Project } from '../../types.ts'
 import type { CanvasBridge, LocatedCard } from '../wire/bridge.ts'
 import type { Translate } from '../ui/locales.ts'
-import { CardFace, useCardFacts } from '../canvas/card-face.tsx'
+import { CardFace, useCardFacts } from '../canvas/card/card-face.tsx'
 import { basenameOf, isInside, parseFileAddress, relativeTo } from '../wire/address.ts'
 
 /** Gap used when seating a card pulled in from a tab; matches `Config.arrangeGap`'s default. */

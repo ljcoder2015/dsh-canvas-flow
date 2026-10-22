@@ -199,8 +199,8 @@ describe('与上游对账：这条遍历是复刻来的', () => {
 })
 
 describe('接线：三件事都得在交给 svg2pdf 之前真的被调到', () => {
-  const pdf = read('../../../../src/client/artifact/viewers/design-pdf.ts')
-  const io = read('../../../../src/client/artifact/viewers/design-io.ts')
+  const pdf = read('../../../../src/client/artifact/viewers/design/design-pdf.ts')
+  const io = read('../../../../src/client/artifact/viewers/design/design-io.ts')
 
   it('修整函数把三件事都串上了', () => {
     const body = /function repairPdfSvg\([\s\S]*?\n\}/.exec(pdf)?.[0] ?? ''

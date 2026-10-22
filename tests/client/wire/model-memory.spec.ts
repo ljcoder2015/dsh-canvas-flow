@@ -35,6 +35,23 @@ const catalog: ModelCatalog = {
   ],
 }
 
+/** 同一份目录，外加一条 doubao 路线：生成模型与对话模型混在一起——真实部署的样子。 */
+const withMedia: ModelCatalog = {
+  default: { provider: 'deepseek', model: 'chat' },
+  groups: [
+    ...catalog.groups,
+    {
+      id: 'doubao',
+      name: 'doubao',
+      models: [
+        { id: 'doubao-seedance-2-0-mini', name: 'Seedance' },
+        { id: 'doubao-seedream-5-0-pro-260628', name: 'Seedream pro' },
+        { id: 'doubao-seed-1-6-250615', name: 'Seed 1.6' },
+      ],
+    },
+  ],
+}
+
 /** A card with only the fields the memory reads. */
 function card(kind: string): BoardCard {
   return {
@@ -83,6 +100,50 @@ describe('node-type model memory', () => {
     installStorage()
     rememberModel('markdown', { provider: 'deepseek', model: 'chat' })
     expect(recallModel('markdown', undefined)).toBeUndefined()
+  })
+
+  /**
+   * 记忆是**菜单之外的第二条通路**（v1.73）。
+   *
+   * 菜单上的过滤只在用户点选那一刻生效；而 v1.73 之前媒体模型本来就在菜单里，用户点过
+   * 一次就写下了一条记忆（按节点类型）。补种那一步读的正是这条记忆——不过滤的话，新建的
+   * 视频卡就会继承一个视频生成模型，下一次请求 400，而症状（报错）与原因（一条几天前
+   * 写下的记忆）隔着十万八千里。同一条判据要在两条通路上都成立。
+   */
+  it('never recalls a media-generation model for a conversation card', () => {
+    installStorage()
+    rememberModel('video', { provider: 'doubao', model: 'doubao-seedance-2-0-mini' })
+    expect(recallModel('video', withMedia)).toBeUndefined()
+    // 同一路线里真正的对话模型照旧召得回来：判据不是「带媒体模型的路线一律作废」。
+    rememberModel('video', { provider: 'doubao', model: 'doubao-seed-1-6-250615' })
+    expect(recallModel('video', withMedia)).toEqual({ provider: 'doubao', model: 'doubao-seed-1-6-250615' })
+  })
+
+  /**
+   * 媒体卡读的是同一条记忆，但**只认生成模型**（v1.76）。
+   *
+   * 用户在一张图片卡上选了 pro，下一张图片卡默认还该是 pro——那是「按类型记住」这件事
+   * 在媒体这一侧的意义。反过来，一条给对话卡写下的记忆（`seed-1-6`）不能被图片卡继承：
+   * 那会让图片卡拿着一个不能出图的模型去生成。
+   *
+   * 两个方向都要判：只判一个方向的话，「两边都接受」那种写法（`isMediaModel(...) || true`
+   * 之类）会一路绿着，而它的症状是图片卡永远在用一个对话模型出图。
+   */
+  it('recalls a generation model for a media card, and only that', () => {
+    installStorage()
+    rememberModel('image', { provider: 'doubao', model: 'doubao-seedream-5-0-pro-260628' })
+    // 同一个 key，按对话卡的语义读：不认（那是生成模型）。
+    expect(recallModel('image', withMedia)).toBeUndefined()
+    // 按媒体卡的语义读：认。
+    expect(recallModel('image', withMedia, { media: true })).toEqual({
+      provider: 'doubao',
+      model: 'doubao-seedream-5-0-pro-260628',
+    })
+
+    // 反过来：一条对话模型的记忆不能被图片卡继承。
+    rememberModel('image', { provider: 'doubao', model: 'doubao-seed-1-6-250615' })
+    expect(recallModel('image', withMedia, { media: true })).toBeUndefined()
+    expect(recallModel('image', withMedia)).toEqual({ provider: 'doubao', model: 'doubao-seed-1-6-250615' })
   })
 
   it('treats unreadable storage as "no memory" rather than failing', () => {

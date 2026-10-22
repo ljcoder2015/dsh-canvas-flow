@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { css } from '../../../src/client/ui/styles.ts'
 
-const VIEW = readFileSync(new URL('../../../src/client/canvas/canvas-view.tsx', import.meta.url), 'utf8')
+const VIEW = readFileSync(new URL('../../../src/client/canvas/board/canvas-view.tsx', import.meta.url), 'utf8')
 
 /** 画布的全部口气档位；少一档就等于有一类消息没有颜色可用。 */
 const TONES = ['info', 'ok', 'warn', 'error'] as const

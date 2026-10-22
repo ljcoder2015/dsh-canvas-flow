@@ -181,33 +181,63 @@ export function encodeDesignFile(graph: SceneGraph): string {
   return `${DESIGN_FILE_PREFIX}${DESIGN_FILE_VERSION}\n${JSON.stringify(snapshot)}`
 }
 
-/** Decode a `.design` file's text into a scene graph. Throws `Error` on any malformed envelope. */
+/**
+ * 解码失败的那六种形状，各给一个**码**。
+ *
+ * 这里的中文消息仍是真源（模型与诊断日志读它），但**用户眼前那一句**由客户端按码出
+ * （`client/ui/locales.ts` 的 `canvas.design.*`）——与 `import-plan.ts` 的「宿主报枚举、
+ * 客户端出文案」是同一条分工：core 是纯逻辑，不知道界面语言。
+ */
+export type DesignDecodeCode =
+  | 'not-design'
+  | 'legacy'
+  | 'future'
+  | 'bad-json'
+  | 'bad-snapshot'
+  | 'bad-node'
+
+/** 解码失败：带码的 Error，客户端按码出界面文案，消息原样留给诊断。 */
+export class DesignDocumentError extends Error {
+  readonly code: DesignDecodeCode
+  /** 只在 `future` 下有意义：那个读不出来的文件头。 */
+  readonly detail: string
+
+  constructor(code: DesignDecodeCode, message: string, detail = '') {
+    super(message)
+    this.code = code
+    this.detail = detail
+  }
+}
+
+/** Decode a `.design` file's text into a scene graph. Throws `DesignDocumentError` on any malformed envelope. */
 export function decodeDesignFile(text: string): SceneGraph {
   const [header, ...rest] = text.split('\n')
   if (header === undefined || !header.startsWith(DESIGN_FILE_PREFIX)) {
-    throw new Error('不是一份设计文档（缺少文件头）')
+    throw new DesignDocumentError('not-design', '不是一份设计文档（缺少文件头）')
   }
   const version = Number.parseInt(header.slice(DESIGN_FILE_PREFIX.length), 10)
   if (version === 1) {
-    throw new Error('旧版设计文件（v1），请让模型重新生成这份设计')
+    throw new DesignDocumentError('legacy', '旧版设计文件（v1），请让模型重新生成这份设计')
   }
   if (!Number.isInteger(version) || version > DESIGN_FILE_VERSION) {
-    throw new Error(`设计文档版本过新：${header}`)
+    throw new DesignDocumentError('future', `设计文档版本过新：${header}`, header)
   }
   let snapshot: DesignSnapshot
   try {
     snapshot = JSON.parse(rest.join('\n')) as DesignSnapshot
   } catch {
-    throw new Error('设计文档内容损坏（JSON 解不开）')
+    throw new DesignDocumentError('bad-json', '设计文档内容损坏（JSON 解不开）')
   }
   if (snapshot?.format !== 'dsh-design' || snapshot?.version !== 2 || !Array.isArray(snapshot?.nodes)) {
-    throw new Error('设计文档内容损坏（快照结构不对）')
+    throw new DesignDocumentError('bad-snapshot', '设计文档内容损坏（快照结构不对）')
   }
   const graph = new SceneGraph()
   graph.nodes.clear()
   graph.rootId = snapshot.rootId
   for (const node of snapshot.nodes) {
-    if (typeof node?.id !== 'string') throw new Error('设计文档内容损坏（节点缺 id）')
+    if (typeof node?.id !== 'string') {
+      throw new DesignDocumentError('bad-node', '设计文档内容损坏（节点缺 id）')
+    }
     node.instanceOverrides = reviveInstanceOverrides(node.instanceOverrides)
     graph.nodes.set(node.id, node)
   }

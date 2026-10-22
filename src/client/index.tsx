@@ -30,8 +30,8 @@ import { DSH_CANVAS_REMOTE, type CanvasFace, type CardFace } from './wire/remote
 import { NS, en, zh } from './ui/locales.ts'
 import { CanvasBridge } from './wire/bridge.ts'
 import { adoptStyles } from './ui/styles.ts'
-import { registerCanvasTabs } from './canvas/canvas-tab.ts'
-import { registerCanvasPanels } from './canvas/canvas-panels.tsx'
+import { registerCanvasTabs } from './canvas/board/canvas-tab.ts'
+import { registerCanvasPanels } from './canvas/project/canvas-panels.tsx'
 import { registerToolViews } from './artifact/tool-view.tsx'
 
 /** Required browser services: the Remote gateway, copy, sessions, layout, and both sidebar halves. */

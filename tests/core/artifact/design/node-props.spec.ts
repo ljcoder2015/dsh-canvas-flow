@@ -41,9 +41,9 @@ const read = (relative: string): string => readFileSync(new URL(relative, import
 /** scene-graph 的类型声明——BlendMode 的真源。 */
 const sceneTypes = read('../../../../node_modules/@open-pencil/scene-graph/dist/types.d.ts')
 /** 真注册字面的那份文件。 */
-const skiaSource = read('../../../../src/client/artifact/viewers/design-skia.ts')
-const panelSource = read('../../../../src/client/artifact/viewers/design-panels.tsx')
-const engineSource = read('../../../../src/client/artifact/viewers/design-engine.ts')
+const skiaSource = read('../../../../src/client/artifact/viewers/design/design-skia.ts')
+const panelSource = read('../../../../src/client/artifact/viewers/design/design-panels.tsx')
+const engineSource = read('../../../../src/client/artifact/viewers/design/design-engine.ts')
 
 /** 从类型声明里抠一个字符串字面量联合（`type X = 'A' | 'B';`）。 */
 function unionOf(source: string, name: string): string[] {
@@ -78,11 +78,11 @@ describe('可选字体与字重', () => {
     expect(TEXT_FAMILIES.map((family) => family.id)).toEqual([LATIN_TEXT_FAMILY, CJK_TEXT_FAMILY])
     // 两个名字都得是**从本模块/app 导出常量导入来的标识符**，而不是那边手写的 'Inter' 字面——
     // 手写的字符串正是「同一个东西两个来源」，漂移之后下拉里选得中、画布上画不出。
-    expect(skiaSource).toContain(
-      "import { LATIN_TEXT_FAMILY } from '../../../core/artifact/design/node-props.ts'",
+    expect(skiaSource).toMatch(
+      /import \{ LATIN_TEXT_FAMILY \} from '(?:\.\.\/)+core\/artifact\/design\/node-props\.ts'/,
     )
-    expect(skiaSource).toContain(
-      "import { CJK_TEXT_FAMILY } from '../../../core/artifact/design/export-font.ts'",
+    expect(skiaSource).toMatch(
+      /import \{ CJK_TEXT_FAMILY \} from '(?:\.\.\/)+core\/artifact\/design\/export-font\.ts'/,
     )
     // 中文字面确实以这个名字注册进 fontManager（面板列它才有意义）。
     expect(skiaSource).toMatch(/loadFontFile\(CJK_TEXT_FAMILY, 'Regular', CJK_FONT_FILE\)/)

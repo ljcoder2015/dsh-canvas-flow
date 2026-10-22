@@ -14,6 +14,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import { installCardScope, renderMaterial, userPromptMessage } from '../../src/host/prompt.ts'
+import { TOOL_NAMES } from '../../src/contract.ts'
 import type { CardSummary, Project } from '../../src/types.ts'
 
 /** One digest, with only the fields under test spelled out. */
@@ -69,7 +70,7 @@ describe('renderMaterial', () => {
     expect(lines[0]).toBe('### Sourced material')
     expect(lines[1]).toBe('')
     expect(lines[2]).toBe('- **brief.md** (markdown) → /proj/brief.md')
-    expect(lines[3]).toBe('  结构：Goal / Audience')
+    expect(lines[3]).toBe('  Structure: Goal / Audience')
     expect(lines[4]).toBe('  A short brief.')
   })
 
@@ -78,7 +79,7 @@ describe('renderMaterial', () => {
   })
 
   it('omits the structure line when the artifact has no outline', () => {
-    expect(renderMaterial([digest({ outline: [] })])).not.toContain('结构')
+    expect(renderMaterial([digest({ outline: [] })])).not.toContain('Structure:')
   })
 
   it('keeps one entry per digest, in the order given', () => {
@@ -108,8 +109,8 @@ describe('设计卡的预设（F3.16 / v1.55）', () => {
     expect(text).toContain('height follow the content')
     expect(text).toContain('Do not split one page into per-screen containers')
     // 网页 / 应用的高度按内容给，菜单里的固定值只是**宽度**与「整块给出」的稿件尺寸。
-    expect(text).toContain('手机屏 375 宽')
-    expect(text).toContain('海报 1242×1660')
+    expect(text).toContain('Phones 375 wide')
+    expect(text).toContain('poster 1242×1660')
   })
 
   it('组织口径按 Figma：区域（section）归类容器（frame），容器里再拆模块容器', () => {
@@ -127,5 +128,45 @@ describe('设计卡的预设（F3.16 / v1.55）', () => {
     const text = sectionTextOf('markdown')
     expect(text).not.toContain('Container sizes')
     expect(text).not.toContain('No pagination')
+  })
+})
+
+describe('媒体卡的预设（F2.7）', () => {
+  it('三种媒体各指到自己的生成工具上，且明说产物不是文本', () => {
+    const expected = {
+      image: TOOL_NAMES.generateImage,
+      video: TOOL_NAMES.generateVideo,
+      audio: TOOL_NAMES.generateAudio,
+    } as const
+    for (const [kind, tool] of Object.entries(expected)) {
+      const text = sectionTextOf(kind)
+      expect(text).toContain(`\`${tool}\``)
+      // 「别拿文件工具去写它」必须是这一条的主体，否则模型会挑好走的那条路。
+      expect(text).toContain('not text')
+      expect(text).toContain('canvas_card_id')
+    }
+  })
+
+  it('不把别的媒体的工具名混进来', () => {
+    expect(sectionTextOf('image')).not.toContain(TOOL_NAMES.generateVideo)
+    expect(sectionTextOf('image')).not.toContain(TOOL_NAMES.generateAudio)
+    expect(sectionTextOf('video')).not.toContain(TOOL_NAMES.generateImage)
+    expect(sectionTextOf('audio')).not.toContain(TOOL_NAMES.generateVideo)
+  })
+
+  it('视频卡额外交代时长是钱，音频卡额外交代 prompt 是导演指令且同步返回', () => {
+    expect(sectionTextOf('video')).toContain('billed per second')
+    // 音频卡最容易写错的一件事：把 prompt 当成「朗读稿」。这一条钉的是那句话本身。
+    expect(sectionTextOf('audio')).toContain("director's brief")
+    expect(sectionTextOf('audio')).toContain('synchronously')
+  })
+
+  it('文本卡与设计卡都不带媒体那套', () => {
+    for (const kind of ['markdown', 'design', 'app']) {
+      const text = sectionTextOf(kind)
+      expect(text).not.toContain(TOOL_NAMES.generateImage)
+      expect(text).not.toContain(TOOL_NAMES.generateVideo)
+      expect(text).not.toContain(TOOL_NAMES.generateAudio)
+    }
   })
 })

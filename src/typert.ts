@@ -45,6 +45,9 @@ const CANVAS_MEMBERS: readonly TypertMemberModel[] = [
 const CARD_MEMBERS: readonly TypertMemberModel[] = [
   member('createCard', 'createCard(projectId, file, kind, position, signal?): Promise<BoardCard>', '为产物文件落一张新卡：file 是项目内相对路径，卡片 id 由画布铸出（6 位随机字母），返回值携带。'),
   member('renameCard', 'renameCard(projectId, cardId, name, signal?): Promise<BoardCard>', '改卡片名（F1.12）：名字写进卡片，并连同磁盘上那一项一起改（文件形态改文件名、目录形态改目录名，入口页跟着搬）；撞名自动带 -2…-99 序号；产物就在画布根目录上、或名字里没有一个能当文件名的字则拒绝。'),
+  member('setMediaModel', 'setMediaModel(projectId, cardId, model, signal?): Promise<BoardCard>', '记下这张卡由哪个模型生成（F2.7）：图片 / 视频 / 音频卡底栏那颗下拉框选的就是它，空串回到「自动」（按模型族在模型配置里挑）。不改会话——会话用哪个模型说话是另一件事。'),
+  member('setAspect', 'setAspect(projectId, cardId, aspect, signal?): Promise<BoardCard>', '记下产物真实的宽高比（F3.11）：浏览器把图 / 视频解码出来量一次再回写，卡片于是按产物自己的比例坐，而不是一律 16:9。它只改这张卡的占位，不改产物一个字节。'),
+  member('importArtifact', 'importArtifact(projectId, cardId, name, content, signal?): Promise<BoardCard>', '把用户本地选中的一个文件导入成这张卡的产物（F2.7）：字节落在画布目录里，卡片改成指向它，形态按新文件名重判。只接受图片 / 视频 / 音频。'),
   member('scaffoldWebapp', 'scaffoldWebapp(projectId, name, position, signal?): Promise<BoardCard>', '新建应用节点：建一个文件夹，写入 web components + shadcn 风格的 web 应用脚手架，并落成卡片。'),
   member('scaffoldDesign', 'scaffoldDesign(projectId, name, position, signal?): Promise<BoardCard>', '新建设计节点：写入一份含空白容器的场景图设计文档（.design v2），并落成卡片。'),
   member('readDesign', 'readDesign(projectId, cardId, signal?): Promise<DesignDocument>', '读取设计文档的 JSON 结构（容器与图层树，scene-graph 快照）。'),

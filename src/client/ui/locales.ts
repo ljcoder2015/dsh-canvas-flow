@@ -39,6 +39,9 @@ export const zh = {
   'canvas.dock.text': '文本',
   'canvas.dock.app': '应用',
   'canvas.dock.design': '设计',
+  'canvas.dock.image': '图片',
+  'canvas.dock.video': '视频',
+  'canvas.dock.audio': '音频',
 
   // 引用线拖到空白处放手时弹出的「新增节点」（F4.8）
   'canvas.drop.title': '新增节点',
@@ -69,6 +72,7 @@ export const zh = {
   'canvas.action.link': '建立引用',
   'canvas.action.export': '导出',
   'canvas.action.publish': '发布',
+  'canvas.action.import': '导入',
   'canvas.action.arrange': '按引用链摆位',
   'canvas.action.tidy': '归纳整理',
   'canvas.action.grid': '网格整理',
@@ -119,6 +123,13 @@ export const zh = {
   'canvas.composer.model': '模型',
   'canvas.composer.modelLoading': '正在加载模型目录…',
   'canvas.composer.modelEmpty': '该提供方暂无可用模型。',
+  'canvas.composer.modelMediaSeat':
+    '这里是对话模型的位置，而当前选的是视频 / 图片生成模型——下一次请求会失败，请换一个。出图 / 出视频用哪个模型，与这里无关。',
+  'canvas.composer.modelAuto': '自动',
+  'canvas.composer.modelMedia': '这张卡的生成模型',
+  'canvas.composer.modelMediaNote':
+    '这里选的是**这张卡的生成模型**——出图 / 出视频用它。不选就是「自动」：按模型名去 DSH 模型配置里找这一类的第一个。它不影响这张卡的对话。',
+  'canvas.composer.modelNoFamily': '该提供方没有这一类的模型。',
   'canvas.panel.title': '卡片',
   'canvas.card.rename': '改卡片名（产物会跟着改名）',
   'canvas.panel.path': '产物',
@@ -168,7 +179,19 @@ export const zh = {
   'canvas.export.pdf': 'PDF 文档（.pdf）',
   'canvas.export.absent': '产物文件还没生成，没有可导出的内容。',
   'canvas.export.truncated': '产物过大，这次只读到了前一部分；照这样导出会静默丢掉后面，所以先不导。',
+  // 媒体卡（图片 / 视频 / 音频）的导出（v1.83）。它是**原样下载**，所以这里没有「转成
+  // 另一种格式失败」这一类；没成只有两种说法：太大（去画布目录取）、内容读不出来。
+  'canvas.export.mediaTruncated':
+    '这个产物太大，超过一次能取回的上限；照这样下载只能得到半份或空文件，所以先不导。它就在画布目录里，可以直接取。',
+  'canvas.export.mediaFailed': '导出失败：{reason}',
   'canvas.export.done': '已导出 {name}',
+  // 导入本地文件当产物（F2.7，v1.81）。三句拒绝各说各的下一步：换一个文件 / 先压小 /
+  // 挑错文件了——合成一句「导入失败」就等于让用户自己猜。
+  'canvas.import.done': '已导入 {name}',
+  'canvas.import.replaced': '已用 {name} 替换了这张卡的产物',
+  'canvas.import.unsupported': '只能导入图片、视频或音频；这个文件不是这三种中的任何一种。',
+  'canvas.import.tooLarge': '这个文件超过 {limit}MB，先压小再导入。',
+  'canvas.import.empty': '这个文件是空的（0 字节），导进去卡片上也没有东西可显示。',
   'canvas.export.pdfFailed': 'PDF 生成失败：{reason}',
   // 应用节点的导出（F10.1）：没有格式可选，也没必要有——产物的「另一种形式」就是它自己
   // 装进一个压缩包。所以「导出」在这里是一击，不是菜单；四种 md/docx 那种分叉不适用。
@@ -189,6 +212,25 @@ export const zh = {
   'canvas.export.designFailed': '导出失败：{reason}',
   'canvas.export.designPacked': '已导出 {name}（{count} 份）',
   'canvas.export.working': '正在导出…',
+  // 引擎侧「画不出来」的四种码（`design-failure.ts`）：引擎只交码与名字（它不知道界面语言），
+  // 文案在这儿出——与 import-plan 的「宿主报枚举、客户端出文案」同一条分工。
+  'canvas.export.designUnrenderable': '「{unit}」画不出来，这一趟先不导出了。',
+  'canvas.export.designNoFont': '取不到中文字面（插件资产没装上），这一趟先不导出了。',
+  'canvas.export.designNoPages': '这一趟没有要导出的页面。',
+  'canvas.export.designSvgUnreadable': '这一页的矢量图读不了。',
+  // 设计文档解码的六种码（`core/artifact/design/document.ts` 的 DesignDocumentError）：
+  // 预览器按码出这一句；core 里那条中文消息留给诊断与模型。
+  'canvas.design.notDesign': '不是一份设计文档（缺少文件头）。',
+  'canvas.design.legacy': '旧版设计文件（v1），请让模型重新生成这份设计。',
+  'canvas.design.future': '设计文档版本过新（{detail}）。',
+  'canvas.design.badJson': '设计文档内容损坏（JSON 解不开）。',
+  'canvas.design.badSnapshot': '设计文档内容损坏（快照结构不对）。',
+  'canvas.design.badNode': '设计文档内容损坏（节点缺 id）。',
+  'canvas.design.engineInitFailed': '设计预览引擎初始化失败。',
+  'canvas.design.engineLoadFailed': '设计预览引擎加载失败，请刷新页面重试。',
+  'canvas.design.sendFailed': '发送失败，请重试。',
+  'canvas.design.truncated': '设计文档为空或被截断，无法渲染。',
+  'canvas.design.empty': '这份设计还没有内容。',
   // 元素选择（F3.14）：在跑起来的页面上点一个元素，把它的源码嵌进提示词交给这张卡
   // 的会话去改。三句话各管一件事——工具叫什么、这一击不会落到页面上、发出去之后呢。
   'canvas.pick.tool': '元素选择',
@@ -294,6 +336,9 @@ export const en = {
   'canvas.dock.text': 'Text',
   'canvas.dock.app': 'Web app',
   'canvas.dock.design': 'Design',
+  'canvas.dock.image': 'Image',
+  'canvas.dock.video': 'Video',
+  'canvas.dock.audio': 'Audio',
 
   // The "new node" popup a source-edge drag opens when it is let go on empty space (F4.8)
   'canvas.drop.title': 'New node',
@@ -324,6 +369,7 @@ export const en = {
   'canvas.action.link': 'Link source',
   'canvas.action.export': 'Export',
   'canvas.action.publish': 'Publish',
+  'canvas.action.import': 'Import',
   'canvas.action.arrange': 'Arrange by source chain',
   'canvas.action.tidy': 'Tidy up',
   'canvas.action.grid': 'Grid',
@@ -371,6 +417,13 @@ export const en = {
   'canvas.composer.model': 'Model',
   'canvas.composer.modelLoading': 'Loading the model catalog…',
   'canvas.composer.modelEmpty': 'No models available from this provider.',
+  'canvas.composer.modelMediaSeat':
+    'This seat is for chat models, but a video / image generation model is selected — the next request will fail. Pick another one; which model draws the image or video is unrelated to this choice.',
+  'canvas.composer.modelAuto': 'Auto',
+  'canvas.composer.modelMedia': 'Generation model for this card',
+  'canvas.composer.modelMediaNote':
+    'This picks the **generation model for this card** — the one that draws the image or renders the video. "Auto" means the first model of that family in your DSH model config. It does not affect this card’s conversation.',
+  'canvas.composer.modelNoFamily': 'No model of this type from this provider.',
   'canvas.panel.title': 'Card',
   'canvas.card.rename': 'Rename the card (its artifact is renamed with it)',
   'canvas.panel.path': 'Artifact',
@@ -425,7 +478,21 @@ export const en = {
   'canvas.export.absent': 'Nothing to export yet — the artifact has not been written.',
   'canvas.export.truncated':
     'The artifact is too large to read whole and only its first part came over; exporting that would silently drop the rest, so nothing was exported.',
+  // Media export (v1.83) hands the artifact over as-is, so there is no
+  // "could not convert to another format" case here — only too large, and
+  // unreadable.
+  'canvas.export.mediaTruncated':
+    'This artifact is too large to fetch in one piece here; downloading it as-is would give you a partial or empty file, so nothing was exported. It is in the canvas folder — you can copy it from there.',
+  'canvas.export.mediaFailed': 'Could not export: {reason}',
   'canvas.export.done': 'Exported {name}',
+  // Importing a local file as the artifact (F2.7, v1.81). Each refusal names its own
+  // next step — pick another file / shrink it / you grabbed the wrong one — because
+  // one blanket "import failed" would leave the user guessing.
+  'canvas.import.done': 'Imported {name}',
+  'canvas.import.replaced': 'Replaced this card’s artifact with {name}',
+  'canvas.import.unsupported': 'Only images, videos and audio can be imported — this file is none of those.',
+  'canvas.import.tooLarge': 'This file is over {limit}MB; shrink it before importing.',
+  'canvas.import.empty': 'This file is empty (0 bytes), so the card would have nothing to show.',
   'canvas.export.pdfFailed': 'Could not build the PDF: {reason}',
   // The application node's export (F10.1) has no format to choose and needs none:
   // the only other form its artifact takes is itself, packed into an archive. So
@@ -451,6 +518,26 @@ export const en = {
   'canvas.export.designFailed': 'Could not export it: {reason}',
   'canvas.export.designPacked': 'Exported {name} ({count} items)',
   'canvas.export.working': 'Exporting…',
+  // The four coded "cannot draw it" failures from the engine (design-failure.ts):
+  // the engine only reports a code and a name — it does not know the UI language —
+  // and the wording lives here (same split as import-plan's enum-vs-locale).
+  'canvas.export.designUnrenderable': '"{unit}" could not be drawn, so this export was stopped.',
+  'canvas.export.designNoFont': 'The CJK font is unavailable (plugin assets are missing), so this export was stopped.',
+  'canvas.export.designNoPages': 'There are no pages to export.',
+  'canvas.export.designSvgUnreadable': 'The vector graphic of this page could not be read.',
+  // The six decode codes (DesignDocumentError in core document.ts): the viewer maps
+  // the code to these lines; the message kept in core is for diagnostics and the model.
+  'canvas.design.notDesign': 'Not a design document (the file header is missing).',
+  'canvas.design.legacy': 'A legacy (v1) design file — ask the model to regenerate this design.',
+  'canvas.design.future': 'The design document is from a newer version ({detail}).',
+  'canvas.design.badJson': 'The design document is damaged (JSON could not be parsed).',
+  'canvas.design.badSnapshot': 'The design document is damaged (the snapshot structure is wrong).',
+  'canvas.design.badNode': 'The design document is damaged (a node is missing its id).',
+  'canvas.design.engineInitFailed': 'The design preview engine failed to initialize.',
+  'canvas.design.engineLoadFailed': 'The design preview engine failed to load; reload the page and try again.',
+  'canvas.design.sendFailed': 'Sending failed; please try again.',
+  'canvas.design.truncated': 'The design document is empty or truncated, so it cannot be rendered.',
+  'canvas.design.empty': 'This design has no content yet.',
   // The element picker (F3.14): click an element on the running page and its own
   // source goes into a prompt handed to this card's conversation.
   'canvas.pick.tool': 'Select element',

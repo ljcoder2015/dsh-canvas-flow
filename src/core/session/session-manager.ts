@@ -15,7 +15,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { CardId, ProjectId, SessionId } from '../../types.ts'
-import { encodeSegment } from '../canvas/ids.ts'
+import { encodeSegment } from '../canvas/card/ids.ts'
 
 /** One live card session. */
 export interface CardSession {
