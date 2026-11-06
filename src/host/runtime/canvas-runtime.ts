@@ -37,7 +37,8 @@ import { planEdges, planIdentity, planNotes, planSeats } from '../../core/canvas
 import { mintCardId, projectIdOf } from '../../core/canvas/card/ids.ts'
 import { cardNameOf } from '../../core/canvas/card/card-name.ts'
 import { applyFoldPlans, foldedPathOf, planFolds } from '../../core/canvas/project/artifact-folders.ts'
-import { aspectSlotOf, mediaSlotOf } from '../../core/canvas/card/card-fields.ts'
+import { aspectSlotOf, mediaSlotOf, paramsSlotOf } from '../../core/canvas/card/card-fields.ts'
+import type { MediaParams } from '../../types.ts'
 import { cardFileOf, cardIdOfKey, cardKeyOf, SessionManager } from '../../core/session/session-manager.ts'
 import { isMediaKind, kindLabel } from '../../core/artifact/kind/kind-registry.ts'
 import { claimCanvasWorkspace } from '../../core/canvas/project/workspace.ts'
@@ -80,6 +81,8 @@ interface CardRecord {
   name?: string | undefined
   /** 这张卡由哪个模型生成（F2.7）；缺席 = 没选过，交给配置里第一个对得上族的模型。 */
   mediaModel?: string | undefined
+  /** 这张卡设下的生成参数（媒体编辑台）；缺席 = 没设过。 */
+  mediaParams?: MediaParams | undefined
   /** 产物的真实宽高比（F3.11）；缺席 = 还没量过，卡片按默认 16:9 坐。 */
   aspect?: number | undefined
 }
@@ -126,6 +129,17 @@ export class CanvasRuntime extends TypertRemoteService {
 
   private get notes() {
     return this.deps.domain.table('notes')
+  }
+
+  /**
+   * 一个项目的根目录，未知 id 交回 `undefined`。
+   *
+   * 它不是 Remote 方法：唯一的读者是工作区图片路由（v1.92 图文），那条 HTTP 路由
+   * 只有 projectId 可用，而且同步就要拿到答案——走 `readBoard` 会为了一个根目录
+   * 拖上整张板面。取不到根（项目已删）由路由那边 404。
+   */
+  rootOf(projectId: string): string | undefined {
+    return this.projects.get(projectId)?.root
   }
 
   /**
@@ -239,6 +253,8 @@ export class CanvasRuntime extends TypertRemoteService {
         // 生成模型也跟着作品走（F2.7）：换台机器打开同一个目录，「图片用 pro、
         // 视频用 2.5」这个制作决定应当还在。文件里没写就是没选过。
         ...(seat.mediaModel === undefined ? {} : { mediaModel: seat.mediaModel }),
+        // 编辑台的参数同样跟着作品走：蒙版、首尾帧、运镜都是「这张片怎么做的」的决定。
+        ...(seat.mediaParams === undefined ? {} : { mediaParams: seat.mediaParams }),
         // 比例也随作品走（F3.11）：不带着它，换台机器打开同一个目录，图片卡会先按 16:9
         // 坐一次、等浏览器量完再跳一下——而它本来就知道自己多宽多高。
         ...(seat.aspect === undefined ? {} : { aspect: seat.aspect }),
@@ -372,6 +388,7 @@ export class CanvasRuntime extends TypertRemoteService {
           sessionId: record.sessionId,
           missing: missingOf(presence, record.seatedEmpty),
       ...mediaSlotOf(record),
+      ...paramsSlotOf(record),
       ...aspectSlotOf(record),
         } satisfies BoardCard
       }),
@@ -427,6 +444,7 @@ export class CanvasRuntime extends TypertRemoteService {
       sessionId: record.sessionId,
       missing: missingOf(presence, record.seatedEmpty),
       ...mediaSlotOf(record),
+      ...paramsSlotOf(record),
       ...aspectSlotOf(record),
     }
   }

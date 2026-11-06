@@ -23,6 +23,7 @@ import type {
   ExportFormat,
   GenerationResult,
   LastPrompt,
+  MediaParams,
   PendingIntent,
   Point,
   Project,
@@ -63,15 +64,25 @@ import {
   storedNameOf,
 } from '../../core/canvas/card/card-name.ts'
 import { IMPORT_MAX_BYTES, IMPORT_REFUSAL_TEXT, importPlanOf, type ImportRefusal } from '../../core/canvas/project/import-plan.ts'
-import { aspectSlotOf, mediaSlotOf } from '../../core/canvas/card/card-fields.ts'
+import { aspectSlotOf, mediaSlotOf, paramsSlotOf } from '../../core/canvas/card/card-fields.ts'
+import {
+  cameraPromptOf,
+  imageBackgroundPromptOf,
+  imageEditPromptOf,
+  imageQualityPromptOf,
+  imageSizeOf,
+  normalizeMediaParams,
+} from '../../core/media/editing.ts'
+import { siblingPathOf } from '../../core/canvas/card/sibling-path.ts'
 import { artifactFolderPathOf, artifactPathOf } from '../../core/canvas/project/artifact-folders.ts'
 import { materialUpstreams } from '../../core/canvas/board/source-store.ts'
 import type { BoardFile } from './board-file.ts'
 import { nameFileReferences, nameWithoutProbe, type FileReferenceTarget } from '../../core/artifact/prompt/file-reference.ts'
 import { containersOf, designNodeToJson, scaffoldDesignDocument, DESIGN_FILE_VERSION } from '../../core/artifact/design/document.ts'
 import { applyDesignOps, type DesignOpInput } from '../../core/artifact/design/ops.ts'
-import type { DesignDocumentWire } from '../../contract.ts'
+import type { DesignDocumentWire, DesignImageResultWire } from '../../contract.ts'
 import { TOOL_NAMES } from '../../contract.ts'
+import { readFile } from 'node:fs/promises'
 
 /** What {@link CardRuntime} needs from the plugin's composition root. */
 export interface CardRuntimeDeps {
@@ -92,6 +103,13 @@ export interface CardRuntimeDeps {
   routing: ModelRouting
   /** Deployment-provided export / publish / image generation, when present. */
   capabilities?: CanvasCapabilities | undefined
+  /**
+   * 这个部署**现在**有没有图片生成路线（v1.92 图文并茂），来自 `MediaProvider`。
+   *
+   * 可选：没有媒体生成的部署（裸 harness、单测）交不出这个答案，文本卡的提示词按
+   * 「没有」走——不许引用不存在的图片，这在任何部署上都是对的。
+   */
+  mediaAvailability?: { imageReady(): boolean } | undefined
 }
 
 /** A stored card record, as the domain keeps it. */
@@ -109,6 +127,8 @@ interface CardRecord {
   name?: string | undefined
   /** 这张卡由哪个模型生成（F2.7）；缺席 = 没选过，交给配置里第一个对得上族的模型。 */
   mediaModel?: string | undefined
+  /** 这张卡设下的生成参数（媒体编辑台）；缺席 = 没设过，生成请求不带任何额外参数。 */
+  mediaParams?: MediaParams | undefined
   /** 产物的真实宽高比（F3.11）；缺席 = 还没量过，卡片按默认 16:9 坐。 */
   aspect?: number | undefined
 }
@@ -351,6 +371,7 @@ export class CardRuntime extends TypertRemoteService {
       sessionId: record.sessionId,
       missing: missingOf(presence, record.seatedEmpty),
       ...mediaSlotOf(record),
+      ...paramsSlotOf(record),
     }
   }
 
@@ -400,6 +421,56 @@ export class CardRuntime extends TypertRemoteService {
       // 回的是**改完之后**的那一份：写空串时 `next` 上已经没有这个字段，所以这里
       // 直接展开它，而不是展开旧记录再补一次。
       ...mediaSlotOf(next),
+      ...paramsSlotOf(next),
+      ...aspectSlotOf(next),
+    }
+  }
+
+  /**
+   * 记下这张卡设下的**生成参数**（媒体编辑台）。
+   *
+   * 与 {@link setMediaModel} 同一类事：改卡片记录上的一个字段，回报改完之后的卡。三条
+   * 规矩也同一套，但空值的形状不同——对象参数没有「空串」，**空对象就是清除**：
+   *
+   * 1. **归一在写入口**（`normalizeMediaParams`）：没设的字段删掉、认不出的档位丢掉，
+   *    全都没设整个字段不写。「没设过」与「一包空参数」在记录里必须是同一种状态。
+   * 2. **不校验路径、不校验档位与模型组合**。蒙版还在不在、这个模型支不支持 inpaint，
+   *    答案都该在**生成的时候**说（服务端的报错或 `missingModelReason` 那句），而不是在
+   *    这张卡上拒绝一次写入，让用户看见一枚按不动的开关。
+   * 3. **不改会话、不碰产物**。参数是生成请求的形状，与那两条线无关。
+   */
+  @Remote
+  async setMediaParams(
+    projectId: ProjectId,
+    cardId: CardId,
+    params: MediaParams,
+    signal?: AbortSignal,
+  ): Promise<BoardCard> {
+    signal?.throwIfAborted()
+    const project = this.requireProject(projectId)
+    const record = this.requireCard(projectId, cardId)
+    const cleaned = normalizeMediaParams(params)
+    const next: CardRecord = { ...record, updatedAt: Date.now() }
+    if (cleaned === undefined) delete next.mediaParams
+    else next.mediaParams = cleaned
+    await this.cards.put(cardKeyOf(projectId, cardId), next)
+    await this.persist(projectId, project, signal)
+
+    const file = fileOf(record, cardId)
+    const presence = await this.deps.io.presenceOf(project.root, file, signal)
+    return {
+      id: cardId,
+      file,
+      name: cardNameOf({ file, kind: record.kind, name: record.name }),
+      project: projectId,
+      kind: record.kind,
+      kindLabel: kindLabel(record.kind),
+      position: record.position,
+      sessionId: record.sessionId,
+      missing: missingOf(presence, record.seatedEmpty),
+      // 回的是**改完之后**的那一份：清空时 `next` 上已经没有这个字段，直接展开它。
+      ...mediaSlotOf(next),
+      ...paramsSlotOf(next),
       ...aspectSlotOf(next),
     }
   }
@@ -437,6 +508,7 @@ export class CardRuntime extends TypertRemoteService {
       sessionId: record.sessionId,
       missing: missingOf(presence, record.seatedEmpty),
       ...mediaSlotOf(next),
+      ...paramsSlotOf(next),
       ...aspectSlotOf(next),
     }
   }
@@ -535,6 +607,7 @@ export class CardRuntime extends TypertRemoteService {
       sessionId: record.sessionId,
       missing: missingOf(presence, undefined),
       ...mediaSlotOf(next),
+      ...paramsSlotOf(next),
       ...aspectSlotOf(next),
     }
   }
@@ -735,6 +808,47 @@ export class CardRuntime extends TypertRemoteService {
     await this.touch(projectId, cardId, record)
     await this.notifyDownstream(project, cardId)
     return { cardId, applied: result.applied, errors: result.errors, version: outcome.version }
+  }
+
+  /**
+   * Generate one image for a card and hand its bytes back (v1.96 图片图层).
+   *
+   * 设计预览的「生成图片」按钮走这里：宿主挑一条图片路线生成，落盘到项目的 `images/`
+   * 目录（同一张图从此也是画布上的产物，可被引用、可被扫描建卡），再把字节 base64 带回
+   * 浏览器——落成设计稿里的图片图层是浏览器的事，宿主不认识场景图。
+   *
+   * **不走 {@link runGeneration}**：那条路把产物写进「卡片自己的文件」，还要按磁盘证据重判
+   * 卡片形态——而这里的产物是设计卡的**素材**，不是它的新形态；卡片记录一个字节不动。
+   * 失败（路线没配、密钥解不出来、服务端拒绝）与导出同一条纪律：`ok: false` + `reason`
+   * 原样带出去，不抛异常。
+   */
+  @Remote
+  async generateImage(projectId: ProjectId, cardId: CardId, prompt: string, signal?: AbortSignal): Promise<DesignImageResultWire> {
+    signal?.throwIfAborted()
+    const project = this.requireProject(projectId)
+    const record = this.requireCard(projectId, cardId)
+    const generate = this.deps.capabilities?.generateImage
+    if (generate === undefined) {
+      return { cardId, ok: false, path: '', base64: '', reason: UNSUPPORTED_IMAGE }
+    }
+    try {
+      // 产物路径跟着设计卡的名字走（`images/<设计名>.png`），撞名带序号——与 scaffoldDesign
+      // 同一套落盘口径，只是目录按 F1.13 归图片。
+      const stem = basenameOf(fileOf(record, cardId)).replace(/\.[^.]+$/, '') || cardId
+      let file = artifactPathOf('image', stem, 'png')
+      for (let n = 2; await this.deps.io.probe(project.root, file, signal).then((probe) => probe.present); n += 1) {
+        file = artifactPathOf('image', `${stem}-${n}`, 'png')
+      }
+      await generate({ project, file, prompt }, signal)
+      // 读回自己刚写的字节交给浏览器：media-provider 落盘走的是 fs 缝 + OS 写，缝上没有
+      // 「读回字节」的口，所以这里按同一条先例用 processPath 直读。
+      const target = await this.ctx.fs.resolve(file, { cwd: project.root, signal })
+      const bytes = await readFile(this.ctx.fs.processPath(target))
+      return { cardId, ok: true, path: file, base64: bytes.toString('base64'), reason: '' }
+    } catch (error) {
+      if (signal?.aborted === true) throw signal.reason
+      return { cardId, ok: false, path: '', base64: '', reason: describe(error) }
+    }
   }
 
   // ── digests ─────────────────────────────────────────────────────────────
@@ -1360,8 +1474,12 @@ export class CardRuntime extends TypertRemoteService {
    *
    * Writes into an existing card when the caller names one, so the image lands
    * as material on the board rather than as an orphan file.
+   *
+   * 名字带 Artifact：与 v1.96 那条 wire 方法 {@link generateImage}（给设计预览生成素材、
+   * 字节带回浏览器）区分——那条不走这条路的「落进卡片自己的文件 + 重判形态」，两条
+   * 产物去向不同，名字也就不能共用。
    */
-  async generateImage(
+  async generateImageArtifact(
     project: Project,
     cardId: CardId,
     prompt: string,
@@ -1372,9 +1490,47 @@ export class CardRuntime extends TypertRemoteService {
     if (generate === undefined) {
       return { cardId, ok: false, path: '', reason: UNSUPPORTED_IMAGE }
     }
-    return this.runGeneration(project, cardId, signal, (file, model) =>
-      generate({ project, file, prompt, referencePath, ...(model === undefined ? {} : { model }) }, signal),
-    )
+    // 参数面板是**卡片上的常设设定**：从记录里读出来，在这里拼进请求——工具与
+    // 会话侧不必知道它存在，面板设下的东西于是对每一条生成路径都生效。
+    //
+    // 三种去向（与相机模式同一条纪律）：
+    // - 协议字段：`outpaintSize`（旧卡遗留的编辑目标，比常设画幅更具体，冲突时它赢）
+    //   与 `imageSizeOf` 换算出的画幅（清晰度 × 比例）共用能力接口的 `editSize` 槽位；
+    // - 导演指令：编辑模式、画质、背景各是一句追加在 prompt 之后的话；
+    // - 生成数量：协议一次一张，多张由下面那圈循环兑现（第 2..N 张写兄弟路径，
+    //   稍后由扫描建卡收进画布）。
+    const params = this.cards.get(cardKeyOf(project.id, cardId))?.mediaParams
+    const editPrompt = imageEditPromptOf(params)
+    const qualityPrompt = imageQualityPromptOf(params?.quality)
+    const backgroundPrompt = imageBackgroundPromptOf(params?.background)
+    const directions = [editPrompt, qualityPrompt, backgroundPrompt].filter((line) => line !== '')
+    const directed = directions.length === 0 ? prompt : `${prompt}${directions.join('')}`
+    const size = params?.outpaintSize ?? imageSizeOf(params?.resolution, params?.ratio)
+    const count = params?.count ?? 1
+    return this.runGeneration(project, cardId, signal, async (file, model) => {
+      const request = {
+        project,
+        file,
+        prompt: directed,
+        referencePath,
+        ...(params?.editMode === undefined ? {} : { editMode: params.editMode }),
+        ...(params?.maskPath === undefined ? {} : { maskPath: params.maskPath }),
+        ...(size === undefined ? {} : { editSize: size }),
+        ...(model === undefined ? {} : { model }),
+      }
+      const first = await generate(request, signal)
+      // 第 2..N 张：一次生成一张，各自落各自的兄弟路径。某一张失败就停——连续失败
+      // 通常是同一个原因（路线、配额），把剩下的张数再打一遍只会把同一条错重复 N 遍。
+      // 已生成的保留在磁盘上；这些张数的失败目前没有承载位，卡片以第一张为准。
+      for (let index = 2; index <= count; index += 1) {
+        try {
+          await generate({ ...request, file: siblingPathOf(file, index) }, signal)
+        } catch {
+          break
+        }
+      }
+      return first
+    })
   }
 
   /**
@@ -1402,8 +1558,31 @@ export class CardRuntime extends TypertRemoteService {
     if (generate === undefined) {
       return { cardId, ok: false, path: '', reason: UNSUPPORTED_VIDEO }
     }
+    // 编辑台的参数是**卡片上的常设设定**。两个槽位两种合并规则：
+    // - 首帧：调用方当次给的参考图赢（模型刚听用户说的那一句，比面板上的常设更近）；
+    //   没给才落到面板设的 firstFramePath。
+    // - 尾帧与相机：只有面板这一个来源。相机里只有 `fixed` 是协议字段；运镜档位写成
+    //   prompt 末尾的导演指令，与运镜措辞的强相关性同住一处。
+    const record = this.cards.get(cardKeyOf(project.id, cardId))
+    const params = record?.mediaParams
+    const cameraPrompt = cameraPromptOf(params?.camera)
     return this.runGeneration(project, cardId, signal, (file, model) =>
-      generate({ project, file, ...options, ...(model === undefined ? {} : { model }) }, signal),
+      generate(
+        {
+          project,
+          file,
+          prompt: cameraPrompt === '' ? options.prompt : `${options.prompt}${cameraPrompt}`,
+          ratio: options.ratio,
+          duration: options.duration,
+          resolution: options.resolution,
+          referencePath: options.referencePath ?? params?.firstFramePath,
+          referenceRole: options.referenceRole,
+          ...(params?.lastFramePath === undefined ? {} : { lastFramePath: params.lastFramePath }),
+          ...(params?.camera === 'fixed' ? { camera: 'fixed' } : {}),
+          ...(model === undefined ? {} : { model }),
+        },
+        signal,
+      ),
     )
   }
 
@@ -1583,6 +1762,9 @@ export class CardRuntime extends TypertRemoteService {
       file,
       kind,
       kindLabel: kindLabel(kind),
+      // 图文并茂（v1.92）：装配时读一次路线表，教不教插图由部署配置决定——句子的
+      // 取舍在这里定死，会话中途改配置不翻转提示词（理由在 `CardScopeInput` 上）。
+      imageGeneration: this.deps.mediaAvailability?.imageReady() === true,
       material: () => this.materialText(project.id, cardId),
     })
   }

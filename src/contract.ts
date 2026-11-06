@@ -9,6 +9,14 @@
  */
 import { z } from 'zod'
 import type { InvocationDescriptor } from '@deepseek-ai/dsh-typert-protocol'
+import {
+  CAMERA_MODES,
+  IMAGE_BACKGROUNDS,
+  IMAGE_EDIT_MODES,
+  IMAGE_QUALITIES,
+  IMAGE_RATIOS,
+  IMAGE_RESOLUTIONS,
+} from './core/media/editing.ts'
 
 /**
  * Package identity on the wire:
@@ -64,6 +72,17 @@ export const TOOL_NAME_LIST: readonly string[] = Object.values(TOOL_NAMES)
  */
 export const TOOL_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/
 
+/**
+ * 工作区图片路由的前缀（v1.92 图文并茂）。
+ *
+ * markdown 产物里的 `![插图](相对路径)` 在浏览器里没有基准 URL：宿主按
+ * `<projectId>/<项目内相对路径>` 把项目里的**图片文件**送出来，客户端把文档里的相对
+ * 引用换写成这条 URL（`client/artifact/viewers/markdown-image.ts`）。前缀挂在契约上
+ * 而不是各自写一份，与工具名同一条理由——两个半边必须拼出同一个地址，抄两遍迟早
+ * 抄岔一次，而且那次不会报错，只会是破图。
+ */
+export const WORKSPACE_ROUTE = '/dsh-canvas/workspace'
+
 /** Identifiers that address one canvas project. */
 export const projectIdSchema = z.string().trim().min(1).max(120)
 /**
@@ -106,6 +125,30 @@ export const projectSchema = z
     createdAt: z.number(),
   })
   .readonly()
+/**
+ * 一张媒体卡设下的生成参数（媒体编辑台）。档位清单与归一规则在 `core/media/editing.ts`。
+ *
+ * 全部可选：空对象是**合法入参**，意思是「这张卡没有参数了」——宿主收到后把字段整个
+ * 删掉（`normalizeMediaParams` 收敛成 `undefined`），与 `mediaModel` 的空串是同一条
+ * 「派生默认 + 只存差异」纪律在对象参数上的落法。
+ */
+export const mediaParamsSchema = z
+  .object({
+    editMode: z.enum(IMAGE_EDIT_MODES).optional(),
+    maskPath: z.string().max(400).optional(),
+    outpaintSize: z.string().max(40).optional(),
+    firstFramePath: z.string().max(400).optional(),
+    lastFramePath: z.string().max(400).optional(),
+    camera: z.enum(CAMERA_MODES).optional(),
+    quality: z.enum(IMAGE_QUALITIES).optional(),
+    resolution: z.enum(IMAGE_RESOLUTIONS).optional(),
+    background: z.enum(IMAGE_BACKGROUNDS).optional(),
+    ratio: z.enum(IMAGE_RATIOS).optional(),
+    // 与 domain.ts 同一条注释：数字档位写成字面量并集，清单真源仍在 IMAGE_COUNTS。
+    count: z.union([z.literal(1), z.literal(2), z.literal(4)]).optional(),
+  })
+  .readonly()
+
 /** One card as the board renders it. Seating and binding only — session state is read live. */
 export const boardCardSchema = z
   .object({
@@ -127,6 +170,12 @@ export const boardCardSchema = z
      * 「没单独选过」——正是它们此前的行为，所以一张卡都不用迁。
      */
     mediaModel: z.string().max(200).optional(),
+    /**
+     * 这张卡设下的生成参数（媒体编辑台），空 = 没设过。
+     *
+     * 与 `mediaModel` 同一条纪律：可选，老记录读出来是 `undefined`，意思就是「没有参数」。
+     */
+    mediaParams: mediaParamsSchema.optional(),
     /**
      * 产物的真实宽高比（宽 ÷ 高，F3.11），空 = 还不知道、按默认 16:9 坐。
      *
@@ -351,10 +400,33 @@ export const designEditResultSchema = z
   })
   .readonly()
 
+/**
+ * 一次「给设计卡生成一张图」的收场（v1.96 图片图层）。
+ *
+ * 与导出同一条纪律：`ok: false` 是**答案**不是异常——路线没配、密钥解不出来、服务端拒绝，
+ * 每一种都有下一步（配路线 / 换 key / 改提示词），所以理由作为 `reason` 原样带出去，界面
+ * 按它说话。`base64` 是生成图自己的字节：浏览器落图层要用它，落盘的 `path` 同时把这张图
+ * 留在项目里（`images/` 下），作为产物可被引用、可被扫描建卡。
+ */
+export const designImageResultSchema = z
+  .object({
+    cardId: cardIdSchema,
+    ok: z.boolean(),
+    /** Project-relative path of the generated image when `ok`. */
+    path: z.string(),
+    /** The image's own bytes, base64 — the browser turns it into a layer. */
+    base64: z.string().max(60_000_000),
+    /** Machine-readable reason when not `ok`. */
+    reason: z.string(),
+  })
+  .readonly()
+
 /** The design document as it crosses the wire (F2.6). */
 export type DesignDocumentWire = z.infer<typeof designDocumentSchema>
 /** The design edit result as it crosses the wire (F2.6). */
 export type DesignEditResultWire = z.infer<typeof designEditResultSchema>
+/** One design-image generation's outcome as it crosses the wire (v1.96). */
+export type DesignImageResultWire = z.infer<typeof designImageResultSchema>
 /** Structured outcome of an export attempt (F10.1). */
 export const exportResultSchema = z
   .object({
@@ -440,6 +512,11 @@ const P = {
    */
   mediaModel: json('model', 'model', 'dsh-canvas-flow#MediaModel', z.string().max(200)),
   /**
+   * 这张卡设下的生成参数（媒体编辑台）。空对象是合法入参（= 清掉全部参数），所以这里
+   * 不加任何「至少一项」的约束——「取消设置」不能变成一次协议层报错。
+   */
+  mediaParams: json('params', 'params', 'dsh-canvas-flow#MediaParams', mediaParamsSchema),
+  /**
    * 产物的真实宽高比（宽 ÷ 高）。上限 100 / 必须为正：这不是给用户填的字段，是浏览器
    * 量出来后回写的，界外值只可能是算错了——在协议层拒绝，比让它把卡片撑成一条线好。
    */
@@ -482,6 +559,7 @@ const R = {
   write: resultOf('dsh-canvas-flow#WriteResult', writeResultSchema),
   designDocument: resultOf('dsh-canvas-flow#DesignDocument', designDocumentSchema),
   designEdit: resultOf('dsh-canvas-flow#DesignEditResult', designEditResultSchema),
+  designImage: resultOf('dsh-canvas-flow#DesignImageResult', designImageResultSchema),
   export: resultOf('dsh-canvas-flow#ExportResult', exportResultSchema),
   session: resultOf('dsh-canvas-flow#SessionBinding', sessionBindingSchema),
   lastPrompt: resultOf('dsh-canvas-flow#LastPrompt', lastPromptSchema),
@@ -597,12 +675,20 @@ export const DSH_CANVAS_INVOCATIONS: readonly InvocationDescriptor[] = [
     invocation: { kind: 'direct' }, parameters: [P.projectId, P.cardId, P.designOps], cancellation: signal, result: R.designEdit,
   },
   {
+    id: 'dsh-canvas-flow#card/generate_image', service: 'card', namespace: 'card', method: 'generateImage',
+    invocation: { kind: 'direct' }, parameters: [P.projectId, P.cardId, P.prompt], cancellation: signal, result: R.designImage,
+  },
+  {
     id: 'dsh-canvas-flow#card/rename_card', service: 'card', namespace: 'card', method: 'renameCard',
     invocation: { kind: 'direct' }, parameters: [P.projectId, P.cardId, P.cardName], cancellation: signal, result: R.card,
   },
   {
     id: 'dsh-canvas-flow#card/set_media_model', service: 'card', namespace: 'card', method: 'setMediaModel',
     invocation: { kind: 'direct' }, parameters: [P.projectId, P.cardId, P.mediaModel], cancellation: signal, result: R.card,
+  },
+  {
+    id: 'dsh-canvas-flow#card/set_media_params', service: 'card', namespace: 'card', method: 'setMediaParams',
+    invocation: { kind: 'direct' }, parameters: [P.projectId, P.cardId, P.mediaParams], cancellation: signal, result: R.card,
   },
   {
     id: 'dsh-canvas-flow#card/set_aspect', service: 'card', namespace: 'card', method: 'setAspect',

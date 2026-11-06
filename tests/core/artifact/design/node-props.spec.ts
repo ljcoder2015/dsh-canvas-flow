@@ -175,7 +175,11 @@ describe('面板接线', () => {
   })
 
   it('换字体时把字重一起落下（一次编辑一笔 undo，不留取不到字面的中间态）', () => {
-    expect(panelSource).toMatch(/commit\(\{ fontFamily, fontWeight: settleWeight\(fontFamily, read\.fontWeight\) \}\)/)
+    // 第三参必须是**当面问出来的那支字面的档**（本地族没有 Thin 就落到最近的），
+    // 不许省成「settleWeight 自己查内置表」——否则选了本地族就落到不存在的档上。
+    expect(panelSource).toMatch(
+      /commit\(\{\s*fontFamily,\s*fontWeight: settleWeight\(fontFamily, read\.fontWeight, weightsForFamily\(fontFamily, localFamilies\)\),\s*\}\)/,
+    )
   })
 
   it('混合模式/对齐/尺寸行为的下拉都直接读表，不另抄一份取值', () => {

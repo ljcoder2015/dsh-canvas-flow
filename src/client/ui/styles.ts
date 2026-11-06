@@ -211,6 +211,14 @@ body[data-ds-dark-theme] .dsh-canvas-root{
   border:1px solid var(--dsh-mid);border-radius:4px;outline:none;
   -webkit-user-select:text;user-select:text}
 .dsh-canvas-card-namefield:focus{border-color:var(--dsh-breeze)}
+/* 卡面的「发布」钮（v1.93，文本卡独有）：平时隐形，hover / 选中显形——画布上
+   每张卡都顶着按钮会吵；它不是常用操作，是「写完了要发」那一刻的入口。 */
+.dsh-canvas-card-publish{flex:none;width:20px;height:20px;padding:0;border:none;border-radius:5px;
+  background:var(--dsh-soft);font:12px/20px var(--dsh-font);color:var(--dsh-fg-2);cursor:pointer;
+  opacity:0;transition:opacity .12s}
+.dsh-canvas-card:hover .dsh-canvas-card-publish,.dsh-canvas-card.is-selected .dsh-canvas-card-publish,
+.dsh-canvas-card-publish:focus-visible{opacity:1}
+.dsh-canvas-card-publish:hover{background:var(--dsh-breeze);color:var(--dsh-on-accent)}
 .dsh-canvas-card-preview{flex:1 1 auto;min-height:0;box-sizing:border-box;padding:0 10px 8px;overflow:hidden;background:var(--dsh-card);
   border-bottom-left-radius:var(--dsh-card-inner-r);border-bottom-right-radius:var(--dsh-card-inner-r)}
 .dsh-canvas-card-preview-line{font:11px/16px var(--dsh-mono);color:var(--dsh-fg-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -229,6 +237,12 @@ body[data-ds-dark-theme] .dsh-canvas-root{
 .dsh-canvas-card-md pre code{font:10px/14px var(--dsh-mono);color:var(--dsh-fg-2)}
 .dsh-canvas-card-md code{font:10px/14px var(--dsh-mono);color:var(--dsh-fg-2)}
 .dsh-canvas-card-md a{color:var(--dsh-breeze);pointer-events:none}
+/* 卡面上的插图（v1.92 图文）：预览区只有一百来像素高，图按「一条横带」显示——
+   最多 72px 高、裁掉上下多余的（object-fit:cover），完整等比留给全屏预览。
+   不裁的话一张 16:9 的截图就吃掉整块预览，正文一行也看不见。也不加边框：
+   图本身就是内容。 */
+.dsh-canvas-card-md img{display:block;width:100%;max-width:100%;height:72px;object-fit:cover;object-position:top center;
+  margin:0 0 4px;border-radius:4px}
 .dsh-canvas-card-md hr{border:0;border-top:1px solid var(--dsh-mid);margin:3px 0}
 /* 设计卡片的截图与应用卡片的迷你帧：两者都从预览区的内边距里破格而出——截图就该铺满
    卡面（负边距抵掉 10px 左右与 8px 底），下缘的两只圆角继承卡片的内圆角变量。 */
@@ -353,11 +367,16 @@ body[data-ds-dark-theme] .dsh-canvas-root{
    状态点与发送。chips 是「一条 chip = 一条引用边」，所以每枚右上角都挂着自己的删除钮
    （卡片上没有 overflow:hidden，角标才探得出去；文字的截断交给内部的 label）。 */
 .dsh-canvas-composer{display:flex;flex-direction:column;gap:8px}
-/* position:relative：@ 候选菜单按这一行锚定（它浮在材料行之上，见下面 .dsh-canvas-refmenu）。 */
+/* position:relative：⊕ 那枚菜单（.dsh-canvas-menu.is-raised）按这一行锚定。@ 候选**不**
+   在这儿锚定——那个浮层贴在那一枚 @ 字符上，挂到画布根上（见 ref-popup-view.tsx）。 */
 .dsh-canvas-composer-materials{position:relative;display:flex;align-items:center;flex-wrap:wrap;gap:7px}
-/* @ 候选：浮在材料行上沿，左沿与带子对齐。行里那枚 data-at 是键盘走到的一枚（与
-   「当前席位」那个 ✓ 分开：那是值，这是光标——两件事不该共用一个记号）。 */
-.dsh-canvas-refmenu{left:0;right:0;bottom:calc(100% + 6px);max-height:220px;overflow:auto;z-index:8}
+/* @ 候选：**按那一枚 @ 定位**，不再浮在材料行上沿。position:fixed + 视口坐标——
+   浮层被 portal 到画布根（缩放层之外），left / top 由 ref-popup.ts 的 placePopup 内联
+   写：贴着 @ 下面，下面放不下就翻到上面，横向夹进视口。层级要压过弹窗遮罩（8）与预览
+   （9）——放大态（⤢）里这枚浮层挂在遮罩之外，压不过就会被自己那层灰盖住。
+   行里那枚 data-at 是键盘走到的一枚（与「当前席位」那个 ✓ 分开：那是值，这是光标）。 */
+.dsh-canvas-refmenu{position:fixed;min-width:150px;max-width:min(320px,calc(100vw - 16px));
+  max-height:220px;overflow:auto;z-index:40}
 .dsh-canvas-menu .dsh-canvas-row[data-at=true]{background:var(--dsh-hl);color:var(--dsh-fg)}
 .dsh-canvas-menu .dsh-canvas-row[data-at=true] .dsh-canvas-row-meta{color:var(--dsh-fg-2)}
 /* 候选行里那枚小图：就是标签上那枚缩略图的候选版，取回来才画。 */
@@ -413,9 +432,30 @@ body[data-ds-dark-theme] .dsh-canvas-root{
   overflow:hidden;text-overflow:ellipsis}
 .dsh-canvas-modelbtn:hover{background:var(--dsh-soft);color:var(--dsh-fg)}
 .dsh-canvas-modelmenu{left:0;bottom:26px;max-height:280px;overflow:auto;z-index:8}
+/* 媒体编辑台（媒体卡底栏的参数面板）：比模型菜单宽、也高一点——图片卡装五组 chip，
+   chip 一行三列等宽平分，最小宽度保证三列不压缩（见 .dsh-canvas-chips）。 */
+.dsh-canvas-paramsmenu{min-width:360px;max-height:420px}
+.dsh-canvas-paramsrow{display:flex;align-items:center;gap:6px;padding:2px 8px 6px}
+.dsh-canvas-paramslabel{flex:none;font:11px/22px var(--dsh-font);color:var(--dsh-fg-2)}
+.dsh-canvas-paramsinput{flex:1;min-width:0;height:22px;padding:0 6px;border:1px solid var(--dsh-mid);
+  border-radius:4px;background:var(--dsh-card);color:var(--dsh-fg);font:11px/20px var(--dsh-font)}
+.dsh-canvas-paramsinput::placeholder{color:var(--dsh-fg-3)}
+.dsh-canvas-paramsinput:focus{outline:none;border-color:var(--dsh-fg-3)}
 .dsh-canvas-modelgroup{padding:6px 8px 3px;font:500 9px/12px var(--dsh-mono);letter-spacing:1.2px;text-transform:uppercase;color:var(--dsh-fg-3)}
 .dsh-canvas-menu .dsh-canvas-row[data-current=true]{color:var(--dsh-fg)}
 .dsh-canvas-menu .dsh-canvas-row[data-current=true]::after{content:'✓';margin-left:auto;color:var(--dsh-sunset)}
+/* 参数面板的档位 chip（画质 / 清晰度 / 背景 / 比例 / 数量）：一行三列、等宽平分。
+   面板的最小宽度按「三列都放得下最长档位名」倒推（3×104 + 间距 + 内边距），
+   不靠压缩按钮迁就容器；nowrap 保证档位名不折行挤压。选中的那颗用主题蓝描边
+   说话——与设计面板的档位按钮同一条视觉纪律，不发明第二种高亮。 */
+.dsh-canvas-chipgroup{padding:0 8px 4px}
+.dsh-canvas-chips{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.dsh-canvas-chip{display:inline-flex;align-items:center;justify-content:center;gap:5px;width:100%;height:24px;padding:0 8px;
+  border:1px solid var(--dsh-mid);border-radius:6px;background:var(--dsh-card);color:var(--dsh-fg-2);
+  font:11px/22px var(--dsh-font);cursor:pointer;white-space:nowrap}
+.dsh-canvas-chip:hover{border-color:var(--dsh-fg-3);color:var(--dsh-fg)}
+.dsh-canvas-chip[data-current=true]{border-color:var(--dsh-breeze);color:var(--dsh-fg);background:var(--dsh-hl)}
+.dsh-canvas-chipshape{flex:none;border:1.5px solid currentColor;border-radius:2px;display:inline-block}
 
 /* 放大态提示词弹窗：这不是另一个界面，是**同一个控制台换了个壳**——里面装的还是那三行
    （材料行 + 输入框 + 底栏），由同一个 ComposerBody 画出来，字号、行高、内边距与行内
@@ -557,6 +597,29 @@ body[data-ds-dark-theme] .dsh-canvas-root{
 .dsh-canvas-design canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
 .dsh-canvas-design-note{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   color:var(--dsh-fg-3);font:13px/19px var(--dsh-font);pointer-events:none}
+/* 设计预览的加载盖板（见 design-viewer 的 DesignPhase）。
+   底色与画布一致（上面 .dsh-canvas-design 的 #e9ebef），撤下时不会闪出另一种颜色 ——
+   这一层盖的时间就是「一片空白」的那段，颜色跳一下会被看成「先失败又好了」。
+   文字色同样**写死深浅**而不是走 --dsh-fg：画布底色恒为浅灰（引擎画出来的那一层也是），
+   暗色主题的令牌在这里会落成白字压浅灰。
+   不给百分比：wasm 编译与整页录制都不报进度，画一个假的进度条只是在骗人。 */
+.dsh-canvas-design-loading{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:9px;background:#e9ebef;user-select:none;pointer-events:none}
+.dsh-canvas-design-loading-ring{width:24px;height:24px;border-radius:50%;
+  border:2px solid rgba(15,23,42,.13);border-top-color:rgba(15,23,42,.52);
+  animation:dsh-canvas-spin .9s linear infinite}
+.dsh-canvas-design-loading-text{color:#3d4553;font:13px/18px var(--dsh-font)}
+.dsh-canvas-design-loading-hint{color:#7c8593;font:11px/16px var(--dsh-font);max-width:340px;
+  text-align:center;padding:0 16px}
+/* 字体进度：一条 3px 的细条 + 一句「字体 3/5 · 12.4 MB / 18.2 MB」。
+   颜色不用令牌——盖板的底色是固定的 #e9ebef（跟画布一致），令牌在暗色下会给出一根
+   几乎看不见的浅条。数字用 tabular-nums：否则 1→7 这种字宽变化会让数字左右跳。 */
+.dsh-canvas-design-loading-bar{width:180px;height:3px;border-radius:999px;overflow:hidden;
+  background:rgba(15,23,42,.12);margin-top:3px}
+.dsh-canvas-design-loading-bar>i{display:block;height:100%;border-radius:999px;
+  background:rgba(15,23,42,.46);transition:width .18s linear}
+.dsh-canvas-design-loading-fonts{color:#7c8593;font:11px/16px var(--dsh-font);
+  font-variant-numeric:tabular-nums}
 /* 视口 HUD（左下角）：缩放控制、适应容器、快捷键提示。中性色走宿主别名令牌，
    暗色自动跟随；键盘快捷键跟聚焦走（画布 tabIndex=0），聚焦不画 outline。 */
 .dsh-canvas-design:focus{outline:none}
@@ -569,6 +632,11 @@ body[data-ds-dark-theme] .dsh-canvas-root{
 .dsh-canvas-design-hud-pct{min-width:52px;text-align:center;font-variant-numeric:tabular-nums}
 .dsh-canvas-design-hud-hint{padding:3px 8px;margin-left:2px;border-left:1px solid var(--dsh-hairline);
   color:var(--dsh-fg-3);font:10px/16px var(--dsh-font);white-space:nowrap}
+/* 盖板撤了、字面还在路上时的那枚小胶囊（中文 17.7MB 就是这种）。与「适应」之间留 6px，
+   与 hint 之间靠 hint 自己的左边框分开——所以它自己不加边框，否则会并排两条竖线。 */
+.dsh-canvas-design-hud-fonts{margin-left:6px;padding:2px 7px;border-radius:999px;
+  background:var(--dsh-soft);color:var(--dsh-fg-3);font:10px/16px var(--dsh-font);
+  font-variant-numeric:tabular-nums;white-space:nowrap}
 /* 编辑态的 dock（画布顶部中间）：撤销 / 重做 / 单选 / 多选。
    浮层的左右两条边由 design-panels.tsx 按面板宽度给（它才知道两块面板之间那段空当在
    哪儿），这里只管垂直位置与横向摆正中。浮层本身不吃指针——空当上那点画布还要能点，
@@ -590,6 +658,23 @@ body[data-ds-dark-theme] .dsh-canvas-root{
 .dsh-canvas-design-dock-modes{display:inline-flex;align-items:center;gap:2px}
 .dsh-canvas-design-dock-modes button[aria-checked=true]{background:var(--dsh-mid);color:var(--dsh-fg)}
 .dsh-canvas-design-dock-sep{width:1px;height:16px;margin:0 3px;background:var(--dsh-hairline)}
+/* 图片图层（v1.96）：dock 胶囊下面挂的小面板（生成的提示词 / 引用的图片清单）与结果
+   一句话。wrap 只负责竖着摞、横向居中——外层 dock-layer 已经把水平摆位管了。 */
+.dsh-canvas-design-dock-wrap{display:flex;flex-direction:column;align-items:center;gap:4px}
+.dsh-canvas-design-dock-panel{display:flex;flex-wrap:wrap;align-items:center;gap:6px;
+  max-width:min(560px,80vw);padding:5px 8px;border-radius:10px;
+  border:1px solid var(--dsh-hairline);background:var(--dsh-card);box-shadow:0 2px 10px rgba(0,0,0,.16);
+  pointer-events:auto}
+.dsh-canvas-design-dock-panel input[type=text]{border:1px solid var(--dsh-hairline);border-radius:6px;
+  background:var(--dsh-card);color:var(--dsh-fg);font:12px/16px var(--dsh-font);padding:3px 8px;
+  width:300px;outline:none}
+.dsh-canvas-design-dock-panel input[type=text]:focus{border-color:var(--dsh-mid)}
+.dsh-canvas-design-dock-panel button{white-space:nowrap}
+.dsh-canvas-design-dock-panel button:disabled{opacity:.5;cursor:default}
+.dsh-canvas-design-dock-panel-empty{color:var(--dsh-fg-3);font:12px/16px var(--dsh-font);padding:2px 4px}
+.dsh-canvas-design-dock-notice{max-width:min(560px,80vw);padding:3px 10px;border-radius:8px;
+  border:1px solid var(--dsh-hairline);background:var(--dsh-card);color:var(--dsh-fg-2);
+  font:12px/16px var(--dsh-font);box-shadow:0 2px 10px rgba(0,0,0,.16);pointer-events:auto}
 /* 属性条（底部居中，单选时出现）：字段与 HUD 同一族壳。 */
 .dsh-canvas-design-props{position:absolute;left:50%;bottom:12px;transform:translateX(-50%);display:flex;
   align-items:center;gap:10px;max-width:calc(100% - 300px);padding:5px 10px;border-radius:8px;
@@ -876,6 +961,15 @@ body[data-ds-dark-theme] .dsh-canvas-root{
   border:1px solid var(--dsh-hairline);overflow:auto}
 .dsh-canvas-md pre code{font:12px/19px var(--dsh-mono);color:var(--dsh-fg-2);background:none;padding:0}
 .dsh-canvas-md code{font:12px/19px var(--dsh-mono);background:var(--dsh-soft);border-radius:4px;padding:1px 5px;color:var(--dsh-fg)}
+/* 插图（v1.92 图文并茂）：markdown 里 ![]() 渲染出的那一枚。**有明确上限**：最宽
+   640px，面板再宽图也不会跟着摊大——插图是正文的配角，通栏那张更像封面。窄面板
+   时退回 100%（min 那一半），所以小窗口里仍然自适应缩放。不加边框，图本身就是
+   内容；随文行内的照常随文走；独占一段的（段里只有一张图）居中成块——用 :has
+   而不是给渲染器加类：一张图在不在自己的段落里，是排版判断，纯函数那边不掺样式。 */
+.dsh-canvas-md img{max-width:min(100%,640px);height:auto;border-radius:8px}
+.dsh-canvas-md p img{display:inline-block;margin:0 2px;vertical-align:middle}
+.dsh-canvas-md p:has(>img:only-child){text-align:center}
+.dsh-canvas-md p:has(>img:only-child) img{display:block;margin:14px auto}
 
 /* ── floating chrome ────────────────────────────────────────────────────── */
 .dsh-canvas-toolbar{position:absolute;display:flex;align-items:center;gap:2px;padding:4px;border-radius:999px;
@@ -978,6 +1072,77 @@ body[data-ds-dark-theme] .dsh-canvas-root{
 
 /* ── folder picker ──────────────────────────────────────────────────────── */
 .dsh-canvas-scrim{position:absolute;inset:0;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px;z-index:5}
+/* 发布页（v1.95）：**独立页面**，铺满画布这个 tab——左平台、右编辑器、顶部导航。
+   从 v1.93 的浮层面板改过来：发布是一件「离开画布去干活」的事，浮层里塞不下
+   编辑器；页面还给了账号管理一个真正的位置。 */
+.dsh-canvas-publish-page{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;
+  background:var(--dsh-surface);color:var(--dsh-fg);font:12px/19px var(--dsh-font);min-width:0;min-height:0}
+.dsh-canvas-publish-nav{display:flex;align-items:center;gap:10px;flex:none;padding:10px 16px;
+  border-bottom:1px solid var(--dsh-hairline);background:var(--dsh-card)}
+.dsh-canvas-publish-nav-title{font:600 14px/20px var(--dsh-font);color:var(--dsh-fg)}
+.dsh-canvas-publish-nav-file{font:11px/16px var(--dsh-mono);color:var(--dsh-fg-3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-canvas-publish-account-pick{display:flex;align-items:center;gap:6px;font:11px/16px var(--dsh-font);color:var(--dsh-fg-3)}
+.dsh-canvas-publish-select{max-width:140px;padding:3px 6px;border-radius:6px;border:1px solid var(--dsh-hairline);
+  background:var(--dsh-card);font:12px/18px var(--dsh-font);color:var(--dsh-fg)}
+.dsh-canvas-publish-body{flex:1;display:flex;min-height:0;min-width:0}
+.dsh-canvas-publish-side{width:176px;flex:none;display:flex;flex-direction:column;gap:4px;padding:12px 10px;
+  border-right:1px solid var(--dsh-hairline);background:var(--dsh-card);overflow:auto}
+.dsh-canvas-publish-side-title{padding:0 4px 6px;font:600 11px/16px var(--dsh-font);color:var(--dsh-fg-3);
+  letter-spacing:.04em;text-transform:uppercase}
+.dsh-canvas-publish-side-item{display:flex;align-items:center;gap:6px;padding:8px 10px;border-radius:8px;
+  border:1px solid transparent;background:transparent;font:500 12px/18px var(--dsh-font);color:var(--dsh-fg-2);
+  cursor:pointer;text-align:left}
+.dsh-canvas-publish-side-item:hover{background:var(--dsh-soft)}
+.dsh-canvas-publish-side-item.is-on{background:var(--dsh-hl);border-color:var(--dsh-hl-edge);color:var(--dsh-fg)}
+.dsh-canvas-publish-side-count{font:11px/16px var(--dsh-mono);color:var(--dsh-fg-3)}
+.dsh-canvas-publish-main{flex:1;display:flex;flex-direction:column;min-width:0;min-height:0}
+.dsh-canvas-publish-toolbar{display:flex;align-items:center;gap:10px;flex:none;padding:8px 16px;
+  border-bottom:1px solid var(--dsh-hairline);background:var(--dsh-card)}
+.dsh-canvas-publish-editor{flex:1;overflow:auto;padding:20px;display:flex;justify-content:center;align-items:flex-start}
+.dsh-canvas-publish-platform-name{font:600 12px/18px var(--dsh-font);color:var(--dsh-fg);flex:none}
+.dsh-canvas-publish-chars{font:11px/16px var(--dsh-mono);color:var(--dsh-fg-3);flex:none}
+.dsh-canvas-publish-over{font:11px/16px var(--dsh-font);color:#c26a1f}
+.dsh-canvas-publish-note{margin:6px 0 0;font:11px/17px var(--dsh-font);color:var(--dsh-fg-3)}
+.dsh-canvas-publish-note.is-ok{color:var(--dsh-fg)}
+.dsh-canvas-publish-note a{color:var(--dsh-breeze);text-decoration:none}
+.dsh-canvas-publish-note a:hover{text-decoration:underline}
+.dsh-canvas-publish-foot-note{margin:0;padding:6px 16px 12px;background:var(--dsh-surface)}
+.dsh-canvas-publish-inline{display:flex;align-items:center;gap:5px;font:11px/16px var(--dsh-font);color:var(--dsh-fg-3)}
+/* 编辑纸：适配产物就是按平台正文排的（内联样式自带颜色），白纸是**文档预览**的
+   语义、不是面板 chrome——所以这里刻意不用主题令牌，暗色下它也该是白的。 */
+.dsh-canvas-publish-sheet{width:min(720px,100%);box-sizing:border-box;background:#ffffff;color:#333333;
+  border-radius:10px;border:1px solid var(--dsh-hairline);padding:28px 30px;min-height:100%;
+  overflow-wrap:break-word}
+.dsh-canvas-publish-sheet .dsh-canvas-md{font:15px/1.8 var(--dsh-font);color:#333333}
+.dsh-canvas-publish-plain{white-space:pre-wrap;word-break:break-word;font:14px/1.9 var(--dsh-font);margin:0}
+.dsh-canvas-publish-source{width:min(720px,100%);box-sizing:border-box;min-height:100%;resize:none;
+  padding:20px 22px;border-radius:10px;border:1px solid var(--dsh-hairline);background:var(--dsh-card);
+  color:var(--dsh-fg);font:12px/1.8 var(--dsh-mono)}
+.dsh-canvas-publish-source:focus{outline:none;border-color:var(--dsh-breeze)}
+/* 账号管理（v1.95）：满屏一层的管理面——一平台可绑多个账号，绑定走「打开官网登录
+   + 粘贴凭证」。 */
+.dsh-canvas-publish-manage{position:absolute;inset:0;z-index:40;display:flex;align-items:center;
+  justify-content:center;background:rgba(0,0,0,.45);padding:20px}
+.dsh-canvas-publish-manage-card{width:min(560px,100%);max-height:100%;overflow:auto;box-sizing:border-box;
+  padding:16px 18px;border-radius:12px;border:1px solid var(--dsh-mid);background:var(--dsh-card);
+  color:var(--dsh-fg-2)}
+.dsh-canvas-publish-manage-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+.dsh-canvas-publish-manage-section{padding:10px 0;border-top:1px solid var(--dsh-hairline)}
+.dsh-canvas-publish-manage-name{display:flex;align-items:center;gap:8px;margin-bottom:4px;
+  font:600 12px/18px var(--dsh-font);color:var(--dsh-fg)}
+.dsh-canvas-publish-accounts-hint{margin:0 0 6px;font:11px/16px var(--dsh-font);color:var(--dsh-fg-3)}
+.dsh-canvas-publish-account{display:flex;align-items:center;gap:8px;min-height:24px}
+.dsh-canvas-publish-account-name{font:500 12px/18px var(--dsh-font);color:var(--dsh-fg-2);flex:none}
+.dsh-canvas-publish-account-state{font:11px/16px var(--dsh-font);color:var(--dsh-fg-3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dsh-canvas-publish-account-form{display:flex;flex-direction:column;gap:6px;margin:6px 0 2px;
+  padding:8px 10px;border:1px solid var(--dsh-hairline);border-radius:8px;background:var(--dsh-soft)}
+.dsh-canvas-publish-account-form .dsh-canvas-publish-inline{justify-content:space-between;gap:8px}
+.dsh-canvas-publish-account-form-actions{display:flex;align-items:center;gap:8px}
+.dsh-canvas-publish-input{flex:1;min-width:0;box-sizing:border-box;padding:3px 8px;border-radius:6px;
+  border:1px solid var(--dsh-hairline);background:var(--dsh-card);font:12px/18px var(--dsh-font);color:var(--dsh-fg)}
+.dsh-canvas-publish-input:focus{outline:none;border-color:var(--dsh-breeze)}
 .dsh-canvas-dialog{width:min(520px,100%);max-height:100%;display:flex;flex-direction:column;border:1px solid var(--dsh-hairline);
   border-radius:8px;background:var(--dsh-card);overflow:hidden}
 .dsh-canvas-dialog-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--dsh-hairline);
@@ -1029,12 +1194,17 @@ body[data-ds-dark-theme] .dsh-canvas-root{
    横穿一次。 */
 @keyframes dsh-canvas-shimmer{from{transform:skewX(-25deg) translateX(-120%)}to{transform:skewX(-25deg) translateX(120%)}}
 @keyframes dsh-canvas-pulse{0%,100%{opacity:1}50%{opacity:.3}}
+/* 转圈：设计预览的加载盖板用（那是「还没画」的唯一信号，所以 reduced-motion 下也留着，
+   只是放慢——与流光同一条规矩：减少，不等于抹掉）。 */
+@keyframes dsh-canvas-spin{to{transform:rotate(360deg)}}
 @media (prefers-reduced-motion:reduce){
   /* 减少动态效果下**不熄灭流光**，只把动感降下来：速度减半、光带减淡。曾经的做法是
      animation:none 加光带停在正中——实测那样整张卡片看上去毫无反馈，与「卡住」无从
      区分，而光在动是这张卡唯一的进行中信号（减少，不等于抹掉）。左侧的实时卡片（见
      tool-view）仍按用户偏好停掉状态点的脉动。 */
   .dsh-canvas-shimmer::after{animation-duration:3.6s;opacity:.6}
+  .dsh-canvas-design-loading-ring{animation-duration:2s}
+  .dsh-canvas-design-loading-bar>i{transition:none}
   .dsh-canvas-dot[data-state=running]{animation:none}
   /* 侧栏换宽也在这条偏好里：直接切，不做那 180ms 的伸缩。 */
   .dsh-canvas-design-side-right{transition:none}

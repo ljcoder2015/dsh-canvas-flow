@@ -89,6 +89,7 @@ import { downloadBytes } from '../export/download.ts'
 import { exportBundle } from '../export/bundle-export.ts'
 import { loadPdfFontBytes, pdfBytes } from '../export/text-pdf.ts'
 import { ArtifactModal } from '../../artifact/artifact-view.tsx'
+import { PublishPage } from '../../artifact/publish/publish-page.tsx'
 import { basenameOf, isInside, parseFileAddress } from '../../wire/address.ts'
 import { isTypingTarget, shortcutOf, SHORTCUT_SHEET, SPACE_KEY, type KeyCap } from '../../ui/shortcuts.ts'
 
@@ -412,6 +413,12 @@ export function CanvasBoard(props: CanvasBoardProps) {
    * 同一个弹窗，直接落在编辑面上。
    */
   const [viewing, setViewing] = useState<{ cardId: string; edit: boolean } | undefined>(undefined)
+  /**
+   * 发布页（v1.95）：铺满画布的独立页面，**不是**弹窗里的一层。
+   *
+   * 它记的是「为哪张卡发布」，页面自己读产物、自己适配；关掉就回画布。
+   */
+  const [publishing, setPublishing] = useState<{ cardId: string } | undefined>(undefined)
   /** Digests of each card's material — its direct upstreams, one hop — keyed by card id. */
   const [materials, setMaterials] = useState<Record<string, CardSummary[]>>({})
 
@@ -1708,6 +1715,11 @@ export function CanvasBoard(props: CanvasBoardProps) {
                   setSelected(card.id)
                   setViewing({ cardId: card.id, edit: false })
                 }}
+                onPublish={(cardId) => {
+                  // 卡面的「发布」钮（v1.95）：直接进发布页——编辑器不在弹窗里。
+                  setSelected(cardId)
+                  setPublishing({ cardId })
+                }}
               />
             ))}
 
@@ -1978,7 +1990,22 @@ export function CanvasBoard(props: CanvasBoardProps) {
             initialMode={viewing.edit ? 'edit' : 'preview'}
             revision={activity}
             onSaved={() => setStamp((value) => value + 1)}
+            onPublish={() => {
+              setPublishing({ cardId: viewing.cardId })
+              setViewing(undefined)
+            }}
             onClose={() => setViewing(undefined)}
+          />
+        ) : null}
+
+        {publishing !== undefined && projectId !== '' ? (
+          <PublishPage
+            key={`${projectId}/${publishing.cardId}`}
+            projectId={projectId}
+            cardId={publishing.cardId}
+            bridge={bridge}
+            t={t}
+            onClose={() => setPublishing(undefined)}
           />
         ) : null}
       </div>

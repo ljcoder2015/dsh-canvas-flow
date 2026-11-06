@@ -45,6 +45,13 @@ export interface ArtifactModalBridge extends ModelBridge {
   writeText(projectId: string, cardId: string, content: string): Promise<unknown>
   /** Hand a picked element's edit request to the card's conversation (F3.14). */
   sendMessage(projectId: string, cardId: string, prompt: string): Promise<unknown>
+  /**
+   * 给这张卡生成一张图片（v1.96 图片图层）：宿主生成并落盘，字节随结果带回。
+   * 失败走 `ok: false` + `reason`，不是异常。
+   */
+  generateImage(projectId: string, cardId: string, prompt: string): Promise<unknown>
+  /** 读一块画布（座次与卡片）——设计预览的「引用画布图片」按它列图片卡。 */
+  readBoard(projectId: string): Promise<unknown>
 }
 
 /** 三处插槽的挂载点；没挂上（`null`）时往里放东西的预览器什么也不画。 */
@@ -74,6 +81,13 @@ export interface ArtifactChrome {
   revision: number | undefined
   /** 弹窗是被控制带的「手动输入」打开的：文本节点直接开在编辑面。 */
   openInEditor: boolean
+  /**
+   * 「去发布」——关掉弹窗、打开发布页（v1.95）。
+   *
+   * 发布从浮层面板改成了独立页面，页面的归属是**画布**（它铺满整个 tab），
+   * 弹窗无权自己渲染；预览器能做的只是把这件事交上去。
+   */
+  openPublish(): void
   /** 「框不许落出去」的那块面积。 */
   areaRef: RefObject<HTMLElement>
   slots: ChromeSlots
@@ -194,6 +208,7 @@ export interface ArtifactShellInput {
   t: Translate
   revision?: number
   openInEditor: boolean
+  openPublish(): void
   adopt(payload: ArtifactView): void
   saved(): void
   discard(): void
@@ -207,7 +222,7 @@ export interface ArtifactShellInput {
  * 让「登记一次」变成「每渲染一次就重登记」。
  */
 export function useArtifactShell(input: ArtifactShellInput): ArtifactShell {
-  const { projectId, cardId, sessionId, bridge, t, revision, openInEditor, adopt, saved, discard } = input
+  const { projectId, cardId, sessionId, bridge, t, revision, openInEditor, openPublish, adopt, saved, discard } = input
   const [header, setHeader] = useState<HTMLElement | null>(null)
   const [banner, setBanner] = useState<HTMLElement | null>(null)
   /** 遮罩层：量尺是 ref（量的是当下那一刻的矩形），插槽是 state（portal 要一个落点）。 */
@@ -256,6 +271,7 @@ export function useArtifactShell(input: ArtifactShellInput): ArtifactShell {
       t,
       revision,
       openInEditor,
+      openPublish,
       areaRef,
       slots: { header, banner, overlay },
       adopt: adoptPayload,
@@ -273,6 +289,7 @@ export function useArtifactShell(input: ArtifactShellInput): ArtifactShell {
       header,
       holdClose,
       openInEditor,
+      openPublish,
       overlay,
       projectId,
       revision,

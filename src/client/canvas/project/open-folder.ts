@@ -46,8 +46,11 @@ export function fileManagerOf(apps: readonly string[]): string {
  * 与宿主自己的客户端同一条规矩：来自 `file:` 之类的嵌入上下文里 `origin` 是字符串
  * `"null"`，那时 `new URL('/open-in-app/apps', 'null')` 会抛错，所以退到一个固定的
  * 主机名——这条路径只在嵌入场景里走，相对地址在那里本来也没有意义。
+ *
+ * 导出而不保持私有：markdown 的图片引用（v1.92）要按同一个基准拼工作区路由的
+ * URL——「页面在哪儿」这个答案只该有一份。
  */
-function hostBase(): string {
+export function hostBase(): string {
   const origin = globalThis.location?.origin
   return origin !== undefined && origin !== 'null' ? origin : 'http://dsh.internal'
 }

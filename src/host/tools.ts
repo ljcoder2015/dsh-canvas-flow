@@ -613,7 +613,7 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
         // 在参考图进了 `image` 字段时才兑现。此前这里写死 `undefined`，于是连线只出现在
         // 提示词里、从来没进过生成请求（用户看到的是「模型没照参考图来」）。
         const reference = referenceFor(board.cards, board.sources, cardId, optionalText(args.referenceCardId))
-        const result = await deps.card.generateImage(
+        const result = await deps.card.generateImageArtifact(
           board.project,
           cardId,
           String(args.prompt),

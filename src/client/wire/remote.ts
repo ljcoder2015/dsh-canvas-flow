@@ -23,6 +23,7 @@ import type {
   ExportResult,
   FolderEntry,
   LastPrompt,
+  MediaParams,
   Note,
   PendingIntent,
   Point,
@@ -35,7 +36,7 @@ import type {
   Viewport,
   WriteResult,
 } from '../../types.ts'
-import { DSH_CANVAS_INVOCATIONS, PACKAGE_NAME, type DesignDocumentWire, type DesignEditResultWire } from '../../contract.ts'
+import { DSH_CANVAS_INVOCATIONS, PACKAGE_NAME, type DesignDocumentWire, type DesignEditResultWire, type DesignImageResultWire } from '../../contract.ts'
 
 /** What the browser mounts to obtain `ctx.remote.canvas` and `ctx.remote.card`. */
 export const DSH_CANVAS_REMOTE: TypertRemoteContribution = {
@@ -79,6 +80,11 @@ export interface CardFace {
   scaffoldDesign(projectId: string, name: string, position: Point, signal?: AbortSignal): Promise<RemoteResult<BoardCard>>
   readDesign(projectId: string, cardId: string, signal?: AbortSignal): Promise<RemoteResult<DesignDocumentWire>>
   editDesign(projectId: string, cardId: string, ops: unknown[], signal?: AbortSignal): Promise<RemoteResult<DesignEditResultWire>>
+  /**
+   * 给一张卡生成一张图片（v1.96）：宿主按模型配置生成并落盘到项目里，字节（base64）
+   * 随结果带回——设计预览拿它落图片图层；失败走 `ok: false` + `reason`。
+   */
+  generateImage(projectId: string, cardId: string, prompt: string, signal?: AbortSignal): Promise<RemoteResult<DesignImageResultWire>>
   /** Rename a card (F1.12): the artifact moves with the name, and the card comes back as it now is. */
   renameCard(projectId: string, cardId: string, name: string, signal?: AbortSignal): Promise<RemoteResult<BoardCard>>
   /**
@@ -87,6 +93,12 @@ export interface CardFace {
    * 与 `renameCard` 同一类：改卡片记录上的一个字段，回改完之后的卡。
    */
   setMediaModel(projectId: string, cardId: string, model: string, signal?: AbortSignal): Promise<RemoteResult<BoardCard>>
+  /**
+   * 记下这张卡设下的生成参数（媒体编辑台）；空对象清除全部参数。
+   *
+   * 与 `setMediaModel` 同一类：改卡片记录上的一个字段，回改完之后的卡。
+   */
+  setMediaParams(projectId: string, cardId: string, params: MediaParams, signal?: AbortSignal): Promise<RemoteResult<BoardCard>>
   setAspect(projectId: string, cardId: string, aspect: number, signal?: AbortSignal): Promise<RemoteResult<BoardCard>>
   /**
    * 把本地选中的一个文件导入成这张卡的产物（F2.7）。
@@ -164,8 +176,10 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
     'card/scaffoldDesign': CardFace['scaffoldDesign']
     'card/readDesign': CardFace['readDesign']
     'card/editDesign': CardFace['editDesign']
+    'card/generateImage': CardFace['generateImage']
     'card/removeCard': CardFace['removeCard']
     'card/setMediaModel': CardFace['setMediaModel']
+    'card/setMediaParams': CardFace['setMediaParams']
     'card/setAspect': CardFace['setAspect']
     'card/importArtifact': CardFace['importArtifact']
     'card/removeMissingCards': CardFace['removeMissingCards']

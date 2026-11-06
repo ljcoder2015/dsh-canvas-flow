@@ -50,7 +50,7 @@ describe('生成时用的模型来自这张卡的记录', () => {
 
   it('三条生成能力都把模型透传下去', () => {
     for (const [signature, what] of [
-      [/async generateImage\(/, '`generateImage`'],
+      [/async generateImageArtifact\(/, '`generateImageArtifact`'],
       [/async generateVideo\(/, '`generateVideo`'],
       [/async generateAudio\(/, '`generateAudio`'],
     ] as const) {
@@ -106,5 +106,98 @@ describe('产物比例写下来的那一笔（F3.11）', () => {
     const body = setter()
     expect(body).toContain('...aspectSlotOf(next)')
     expect(body).not.toContain('...aspectSlotOf(record)')
+  })
+})
+
+describe('媒体编辑台参数写下来的那一笔', () => {
+  const setter = (): string => bodyOf(/async setMediaParams\(/, '`setMediaParams`')
+
+  it('归一在写入口：空对象是「清除全部」（字段删掉），不是存一包空参数', () => {
+    // 对象参数没有「空串」：`normalizeMediaParams` 收敛成 undefined 即整字段不写——
+    // 「没设过」与「一包空参数」在记录里必须是同一种状态，否则板面文件里会留一堆 {}。
+    expect(setter()).toContain('normalizeMediaParams(params)')
+    expect(setter()).toContain('delete next.mediaParams')
+  })
+
+  it('不校验路径、不校验档位组合——那是生成时才该说的话', () => {
+    // 蒙版还在不在、模型支不支持 inpaint，答案在 `missingModelReason` 或服务端那句；
+    // 在这张卡上拒绝写入只会让用户看见一枚按不动的开关。（回报里那一下 presenceOf
+    // 是 `missing` 判定用的，与 setMediaModel 同一笔，不是在验蒙版。）
+    const body = setter()
+    expect(body).not.toContain('isMediaModel')
+    expect(body).not.toContain('readBytes')
+    expect(body).not.toContain('maskPath')
+  })
+
+  it('回报的是改完之后的那一份', () => {
+    const body = setter()
+    expect(body).toContain('...paramsSlotOf(next)')
+    expect(body).not.toContain('...paramsSlotOf(record)')
+  })
+})
+
+describe('编辑台参数真的会走进生成请求', () => {
+  it('生图把编辑模式、蒙版与画幅交给能力，三类导演指令都追加进 prompt', () => {
+    const body = bodyOf(/async generateImageArtifact\(/, '`generateImage`')
+    expect(body).toContain('imageEditPromptOf(params)')
+    // 画质与背景在协议里没有字段，去向是 prompt 末尾的导演指令——漏拼就是「设了没效果」。
+    expect(body).toContain('imageQualityPromptOf(params?.quality)')
+    expect(body).toContain('imageBackgroundPromptOf(params?.background)')
+    expect(body).toContain('editMode: params.editMode')
+    expect(body).toContain('maskPath: params.maskPath')
+    // 画幅两个来源冲突时扩图尺寸赢（更具体的意图）。
+    expect(body).toContain('params?.outpaintSize ?? imageSizeOf(params?.resolution, params?.ratio)')
+    expect(body).toContain('editSize: size')
+  })
+
+  it('生成数量在宿主循环兑现：第一张落卡片，第 2..N 张写兄弟路径，失败即停', () => {
+    const body = bodyOf(/async generateImageArtifact\(/, '`generateImage`')
+    // 协议一次一张——「4 张」必须是真的发起 4 次生成，而不是把数字存起来就算数。
+    expect(body).toContain('params?.count ?? 1')
+    expect(body).toContain('siblingPathOf(file, index)')
+    expect(body).toContain('index <= count')
+    // 连续失败通常是同一个原因；把剩下的张数再打一遍只是把同一条错重复 N 遍。
+    expect(body).toContain('break')
+  })
+
+  it('生视频把尾帧与固定机位交给能力，运镜写成 prompt 的导演指令', () => {
+    const body = bodyOf(/async generateVideo\(/, '`generateVideo`')
+    expect(body).toContain('cameraPromptOf(params?.camera)')
+    expect(body).toContain('lastFramePath: params.lastFramePath')
+    expect(body).toContain(`params?.camera === 'fixed'`)
+  })
+
+  it('首帧的合并规则：调用方当次给的参考图赢，没给才落到面板设的那张', () => {
+    const body = bodyOf(/async generateVideo\(/, '`generateVideo`')
+    // `??` 的方向就是这条规则：先看当次调用，再看常设参数。反过来会让模型刚听用户说的
+    // 那张参考图被面板上一张旧图顶掉。
+    expect(body).toContain('options.referencePath ?? params?.firstFramePath')
+  })
+
+  it('四条 BoardCard 回报都摊开 paramsSlotOf——少一处就是某个入口之后参数忽然消失', () => {
+    // 与 card-fields.spec 的纪律判据同源：这个字段是四处各自拼 BoardCard 的，编译期
+    // 挡不住「漏展开」（可选字段），只能靠源码扫描兜。
+    const spreads = RUNTIME.match(/\.\.\.paramsSlotOf\(/g) ?? []
+    expect(spreads.length).toBeGreaterThanOrEqual(4)
+  })
+})
+
+describe('wire 五处注册面齐全（setMediaParams）', () => {
+  // 与 model-seat.spec 对 model-picker 的做法同源：五处少一处，编译期只有类型能挡一部分
+  // （contract 与 typert 有 parity 判据，client 的 remote/bridge 没有），漏了就是运行期才崩。
+  const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8')
+
+  it('contract 有 descriptor、typert 有成员、host 有实现、client 有 face 与桥', () => {
+    const contract = read('../../../src/contract.ts')
+    const typert = read('../../../src/typert.ts')
+    const remote = read('../../../src/client/wire/remote.ts')
+    const bridge = read('../../../src/client/wire/bridge.ts')
+    expect(contract).toContain("id: 'dsh-canvas-flow#card/set_media_params'")
+    expect(contract).toContain('method: \'setMediaParams\'')
+    expect(typert).toContain("member('setMediaParams'")
+    expect(RUNTIME).toContain('async setMediaParams(')
+    expect(remote).toContain('setMediaParams(')
+    expect(remote).toContain("'card/setMediaParams'")
+    expect(bridge).toContain('setMediaParams(')
   })
 })

@@ -60,6 +60,11 @@ export function ArtifactModal(props: {
   t: Translate
   /** Open straight into the editor — the control strip's 手动输入 button. */
   initialMode?: ViewerMode
+  /**
+   * 去发布（v1.95）：发布页铺满画布、由画布自己渲染，弹窗只是把这件事交上去
+   * ——通常是关掉弹窗、打开页面，所以这里只有回调、没有「初始状态」。
+   */
+  onPublish?: () => void
   /** A save landed; the board re-reads what it draws from this. */
   onSaved?: () => void
   /**
@@ -71,7 +76,7 @@ export function ArtifactModal(props: {
   revision?: number
   onClose: () => void
 }) {
-  const { projectId, cardId, sessionId, bridge, t, initialMode, onSaved, onClose, revision } = props
+  const { projectId, cardId, sessionId, bridge, t, initialMode, onPublish, onSaved, onClose, revision } = props
 
   const payload = useArtifactPayload({ projectId, cardId, bridge, t })
   const shell = useArtifactShell({
@@ -82,6 +87,7 @@ export function ArtifactModal(props: {
     t,
     revision,
     openInEditor: initialMode === 'edit',
+    openPublish: () => onPublish?.(),
     adopt: payload.adopt,
     saved: onSaved ?? noop,
     discard: onClose,

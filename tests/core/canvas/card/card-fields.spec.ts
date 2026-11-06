@@ -7,7 +7,7 @@
  * 一个入口把 `undefined` 当成 `null` 写出去，而那之后「有没有选过」就再也分不清了。
  */
 import { describe, expect, it } from 'vitest'
-import { aspectSlotOf, mediaSlotOf } from '../../../../src/core/canvas/card/card-fields.ts'
+import { aspectSlotOf, mediaSlotOf, paramsSlotOf } from '../../../../src/core/canvas/card/card-fields.ts'
 
 describe('把卡片记录里的生成模型摊成可展开的片段', () => {
   it('没选过就什么都不出现', () => {
@@ -41,5 +41,29 @@ describe('把卡片记录里的宽高比摊成可展开的片段（F3.11）', ()
   it('两个片段各管各的：一张卡可以选了模型、却还没量过比例', () => {
     const record = { mediaModel: 'doubao-seedance-2-5', aspect: undefined }
     expect({ ...mediaSlotOf(record), ...aspectSlotOf(record) }).toEqual({ mediaModel: 'doubao-seedance-2-5' })
+  })
+})
+
+describe('把卡片记录里的生成参数摊成可展开的片段（媒体编辑台）', () => {
+  const params = { editMode: 'inpaint' as const, maskPath: 'images/mask.png' }
+
+  it('没设过（含「被清空后」）就什么都不出现', () => {
+    expect(paramsSlotOf({})).toEqual({})
+    expect(paramsSlotOf({ mediaParams: undefined })).toEqual({})
+    // 归一（normalizeMediaParams）在写入口已经把「全空」变成了「不写」，所以这里
+    // 读到 undefined 只有一种意思——这张卡没有参数。
+    expect({ ...{ mediaParams: params }, ...paramsSlotOf({}) }).toEqual({ mediaParams: params })
+  })
+
+  it('设过就整包原样带出来：参数是对象，不存在「摊开一半」', () => {
+    expect(paramsSlotOf({ mediaParams: params })).toEqual({ mediaParams: params })
+  })
+
+  it('三个片段各管各的：一张卡可以选了模型、又设了参数、却还没量过比例', () => {
+    const record = { mediaModel: 'doubao-seedance-2-5', mediaParams: params, aspect: undefined }
+    expect({ ...mediaSlotOf(record), ...paramsSlotOf(record), ...aspectSlotOf(record) }).toEqual({
+      mediaModel: 'doubao-seedance-2-5',
+      mediaParams: params,
+    })
   })
 })

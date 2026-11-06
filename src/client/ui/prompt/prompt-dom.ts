@@ -23,6 +23,7 @@
  */
 import { referenceBadge } from '../../../core/artifact/prompt/prompt-blocks.ts'
 import type { PromptAtom, PromptReference, ReferenceType } from '../../../core/artifact/prompt/prompt-blocks.ts'
+import type { QueryAnchor } from './ref-popup.ts'
 
 /** 引用标签的类名与它身上那几个属性——写、读、判三处共用这一份。 */
 export const CHIP_CLASS = 'dsh-canvas-ref-chip'
@@ -126,6 +127,97 @@ function flatten(node: Node, first: boolean, into: string[]): void {
   }
 }
 
+/** 一枚标签在扁平文本里的起点，与它**冻结**着的那串字符。 */
+export interface ChipSpan {
+  readonly at: number
+  readonly token: string
+}
+
+/**
+ * 界面上现在有哪几枚标签、各在哪、各冻着哪串字符。
+ *
+ * 与 {@link serializeHost} 走同一套累加（{@link lengthOf} 那一套），所以 `at` 就是这枚标签
+ * 在值里的偏移——**这是「值」与「界面」之间唯一一次对账**：标签里那串字符是插入时定下的
+ * （`data-ref-id`），它不会因为旁边多了几个字而变长。
+ *
+ * @param host - the editable root.
+ */
+export function chipSpans(host: HTMLElement): ChipSpan[] {
+  const spans: ChipSpan[] = []
+  let at = 0
+  const walk = (node: Node, first: boolean): void => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      at += (node.nodeValue ?? '').length
+      return
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) return
+    if (node.nodeName === 'BR') {
+      at += 1
+      return
+    }
+    if (isChip(node)) {
+      const token = tokenOf(node)
+      spans.push({ at, token })
+      at += token.length
+      return
+    }
+    if (BLOCK_TAGS.has(node.nodeName) && !first) at += 1
+    let index = 0
+    for (const child of node.childNodes) {
+      walk(child, index === 0)
+      index += 1
+    }
+  }
+  walk(host, true)
+  return spans
+}
+
+/**
+ * 用户**紧贴着标签**写字时，值里那串字符会把字吞进记号——补一处分隔。
+ *
+ * `@hero.png` 后面直接打 `abc`，拼出来是 `@hero.pngabc`：那是**另一份文件**的路径，不是
+ * 「这枚引用后面跟了一段话」。宿主照这串字符去认记号，于是发出去的提示词引错了东西；
+ * 而输入面这边更糟——整串成了一个原子，那一下 Backspace 删的是**整块**（用户看到的正是
+ * 「一删就把文件和后面的字一起删了」）。
+ *
+ * 两处都补：
+
+ * - **右边**：`token` 后面紧跟的不是空白 ⇒ 在它后面插一个空格。判据用「非空白」而不是
+ *   「是否真的被吞」：打一个 `"` 会把这串路径读成非法路径（整段退回普通文字），那时
+ *   界面上那枚标签就凭空消失了——比多一个空格坏得多。
+ * - **左边**：`@` 前面紧贴着一个字 ⇒ 这枚记号在**词首**才算引用（宿主语法那条边界），
+ *   不补的话界面上是一枚标签、值里却是一截普通文字（两处不一致，且引用的东西变了）。
+ *
+ * 纯算术（不碰 DOM）：标签在哪、冻着什么是 {@link chipSpans} 数出来的。
+ *
+ * @param text - 刚从 DOM 读回来的值。
+ * @param spans - 界面上那几枚标签。
+ * @param caret - 扁平光标（插入空格之后要跟着挪）。
+ * @returns 补好分隔的新值与新光标；不用补（或界面与值对不上）就是 `null`。
+ */
+export function separatedSpans(
+  text: string,
+  spans: readonly ChipSpan[],
+  caret: number,
+): { readonly text: string; readonly caret: number } | null {
+  const cuts = new Set<number>()
+  for (const span of spans) {
+    // 值里这个位置不是这枚标签那串字符（界面与值已经对不上了）：不猜，留给下一次重画。
+    if (!text.startsWith(span.token, span.at)) continue
+    const end = span.at + span.token.length
+    if (span.at > 0 && !/\s/u.test(text[span.at - 1]!)) cuts.add(span.at)
+    if (end < text.length && !/\s/u.test(text[end]!)) cuts.add(end)
+  }
+  if (cuts.size === 0) return null
+  let next = text
+  let nextCaret = caret
+  for (const at of [...cuts].sort((left, right) => right - left)) {
+    next = `${next.slice(0, at)} ${next.slice(at)}`
+    if (nextCaret >= at) nextCaret += 1
+  }
+  return { text: next, caret: nextCaret }
+}
+
 /** 内容 → 值。标签吐回它自己那串字符，`<br>` 与块级元素的换行吐回 `\n`。 */
 export function serializeHost(host: HTMLElement): string {
   const parts: string[] = []
@@ -211,6 +303,37 @@ export function selection(host: HTMLElement): { start: number; end: number } | u
 export function caretFlat(host: HTMLElement): number | undefined {
   const range = selection(host)
   return range === undefined ? undefined : range.end
+}
+
+/** 一个视口盒子（`QueryAnchor` 的四个量）：只取这四个，`DOMRect` 其余那几个字段一概不带。 */
+function boxOf(rect: DOMRect): QueryAnchor {
+  return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom }
+}
+
+/**
+ * 第 `flat` 个字符在**视口**里占的盒子——按字符量，不按输入框量。
+ *
+ * `@` 候选弹窗要贴着那一枚 `@` 出现，所以得知道那个字符此刻在屏幕上的哪儿。位置用
+ * {@link domPosition} 换算（它认标签：落到标签旁边而不是里面），再拿一个折叠 Range 量
+ * ——浏览器给的正是那一行的行盒（宽 0、高是行高）。
+ *
+ * 折叠 Range 量出空盒子时（有的浏览器在空行、行首上就是 0×0）退一步量**那一枚字符本身**：
+ * 宁可让弹窗贴着它的右半边，也不要没有落点。两下都量不到就是 `undefined`——调用方那侧
+ * 该把弹窗收起来，而不是把它摆到 (0,0) 去。
+ */
+export function charRect(host: HTMLElement, flat: number): QueryAnchor | undefined {
+  const document = host.ownerDocument
+  const at = domPosition(host, flat)
+  const range = document.createRange()
+  range.setStart(at.node, at.offset)
+  range.collapse(true)
+  const caret = range.getBoundingClientRect()
+  if (caret.width > 0 || caret.height > 0) return boxOf(caret)
+  const next = domPosition(host, flat + 1)
+  if (next.node === at.node && next.offset === at.offset) return undefined
+  range.setEnd(next.node, next.offset)
+  const box = range.getBoundingClientRect()
+  return box.width > 0 || box.height > 0 ? boxOf(box) : undefined
 }
 
 /**

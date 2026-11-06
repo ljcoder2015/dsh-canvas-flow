@@ -99,11 +99,18 @@ export function weightsOf(family: string): readonly number[] {
  *
  * 这是「同一个东西两个来源」那一类的预防：面板上字重与字体族是两个控件，但**能用的字重由
  * 字体族决定**。换了族却不改字重，写下去的就是一份取不到字面的样式——而失败表现是空白文字。
+ *
+ * `weights` 是给「本机字体」开的：那些族不在 `TEXT_FAMILIES` 里，字重档由宿主扫出来的
+ * 清单决定（苹方有 Regular/Medium/Semibold…），不传就按内置那张表。
  */
-export function settleWeight(family: string, weight: number): number {
-  const weights = weightsOf(family)
-  if (weights.includes(weight)) return weight
-  return weights.reduce((best, candidate) =>
+export function settleWeight(
+  family: string,
+  weight: number,
+  weights: readonly number[] = weightsOf(family),
+): number {
+  const list = weights.length > 0 ? weights : [400]
+  if (list.includes(weight)) return weight
+  return list.reduce((best, candidate) =>
     Math.abs(candidate - weight) < Math.abs(best - weight) ? candidate : best,
   )
 }

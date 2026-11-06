@@ -38,6 +38,13 @@ export interface ImageRequestInput {
    * 本地绝对路径在这里没有意义——那一步由 host 侧读字节、拼 data URL（`media-provider.ts`）。
    */
   readonly referenceUrl?: string
+  /**
+   * 局部重绘（inpaint）的蒙版，与 {@link referenceUrl} 同一套地址规则。
+   *
+   * 蒙版是**第二张图**，不是参考图的一种：原图在 `image` 上，蒙版在 `mask` 上——塞进
+   * `image` 数组会让服务端把两张图都当成参考素材，而不是「一张内容、一张区域」。
+   */
+  readonly maskUrl?: string
 }
 
 /**
@@ -67,6 +74,9 @@ export function arkImageBody(input: ImageRequestInput): Record<string, unknown> 
     // 多图给数组）—— 给字符串让这条请求在最老的形态上也成立。
     body['image'] = input.referenceUrl
   }
+  // 蒙版与原图各走各的字段（见 ImageRequestInput.maskUrl）：没有原图的蒙版没有意义，
+  // 所以它不单独开一条请求，只在 inpaint 那条通路上跟在 `image` 后面。
+  if (input.maskUrl !== undefined && input.maskUrl.trim() !== '') body['mask'] = input.maskUrl
   return body
 }
 
@@ -116,6 +126,14 @@ export interface VideoRequestInput {
   /** 首帧参考图的公网地址（图生视频）。 */
   readonly referenceUrl?: string
   /**
+   * 尾帧参考图（首尾帧场景的第二张图）。
+   *
+   * 它与 {@link referenceUrl} 各占一个槽位、各写各的 `role`：首尾帧是「一张管开头、
+   * 一张管结尾」的两张图，塞进一张里就是让服务端猜。只有尾帧、没有首帧也是合法的
+   * 组合（尾帧图生视频），此时 `content` 里只有 `last_frame` 那一条。
+   */
+  readonly lastFrameUrl?: string
+  /**
    * 参考图在这一次生成里扮演的角色。
    *
    * 取值按 Ark 的约定：`first_frame`（图生视频首帧）、`last_frame`（首尾帧两图时的
@@ -127,6 +145,16 @@ export interface VideoRequestInput {
    * 而不是发一个语义未定的请求然后猜结果。
    */
   readonly referenceRole?: string
+  /**
+   * 相机控制（媒体编辑台）：`fixed` = 固定机位，落进请求体的 `camera_fixed`。
+   *
+   * 运镜档位（推 / 拉 / 摇）到这里之前已经被调用方写成了 prompt 里的导演指令
+   * （`core/media/editing.ts`），不会走到这个字段——它只收协议真有的那一个值。
+   * 文档注明 `camera_fixed` 在参考图场景不受支持：这条约束**不在客户端拦**——拦了
+   * 就是替用户决定「固定机位 + 图生视频」不能一起要，而服务端的报错比一个静默丢掉
+   * 的参数更诚实。
+   */
+  readonly camera?: string
   /** 是否让模型顺带生成音轨。 */
   readonly generateAudio?: boolean
   /** 固定种子，用于复现同一条片子。 */
@@ -159,33 +187,32 @@ const FRAME_ROLES: readonly string[] = ['first_frame', 'last_frame']
  */
 export function arkVideoBody(input: VideoRequestInput): Record<string, unknown> {
   const content: Record<string, unknown>[] = [{ type: 'text', text: input.prompt }]
-  const referenceUrl = input.referenceUrl?.trim() ?? ''
-  const role = referenceRoleOf(referenceUrl, input.referenceRole)
-  if (role !== undefined) {
-    content.push({ type: 'image_url', image_url: { url: referenceUrl }, role })
+  const firstUrl = input.referenceUrl?.trim() ?? ''
+  const lastUrl = input.lastFrameUrl?.trim() ?? ''
+  const named = input.referenceRole?.trim() ?? ''
+  // 首帧的角色：尾帧也在场上时两帧的分工是固定的（first / last），调用方点名的 role
+  // 只对「单张参考图」有意义——reference_image 那种全模态读法不能和一个明确的尾帧共存。
+  const firstRole = firstUrl === '' ? undefined : lastUrl !== '' || named === '' ? 'first_frame' : named
+  if (firstRole !== undefined) {
+    content.push({ type: 'image_url', image_url: { url: firstUrl }, role: firstRole })
+  }
+  if (lastUrl !== '') {
+    content.push({ type: 'image_url', image_url: { url: lastUrl }, role: 'last_frame' })
   }
   const body: Record<string, unknown> = { model: input.model, content }
-  const ratio = FRAME_ROLES.includes(role ?? '') ? 'adaptive' : input.ratio
+  // 任一**帧**（first / last）在场上，比例就归一 adaptive——见 FRAME_ROLES；
+  // reference_image 与纯文生视频不归一，用户要什么比例就还是什么比例。
+  const framed = FRAME_ROLES.includes(firstRole ?? '') || lastUrl !== ''
+  const ratio = framed ? 'adaptive' : input.ratio
   if (ratio !== undefined && ratio.trim() !== '') body['ratio'] = ratio
   if (input.duration !== undefined) body['duration'] = input.duration
   if (input.resolution !== undefined && input.resolution.trim() !== '') body['resolution'] = input.resolution
   if (input.generateAudio !== undefined) body['generate_audio'] = input.generateAudio
   if (input.seed !== undefined) body['seed'] = input.seed
+  if (input.camera === 'fixed') body['camera_fixed'] = true
   // 水印是产品决定，不是用户参数：画布上的产物是用户的素材，不该带着别人的角标。
   body['watermark'] = false
   return body
-}
-
-/**
- * 这一次请求里参考图的角色；没有参考图就是 `undefined`。
- *
- * 单独抽出来的理由：`ratio` 的取值依赖它，两处各判一次必然会分叉（一处认为「没给角色」、
- * 另一处认为「是首帧」），而分叉的表现是「同样的请求有时 400 有时不 400」。
- */
-function referenceRoleOf(url: string, named: string | undefined): string | undefined {
-  if (url === '') return undefined
-  const trimmed = named?.trim() ?? ''
-  return trimmed === '' ? 'first_frame' : trimmed
 }
 
 /**

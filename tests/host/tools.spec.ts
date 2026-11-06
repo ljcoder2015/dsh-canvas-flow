@@ -187,7 +187,7 @@ function harness(
       createCard: async (): Promise<BoardCard> => CARD,
       scaffoldWebapp: async (): Promise<BoardCard> => ({ ...CARD, id: 'site/index.html' }),
       scaffoldDesign: async (): Promise<BoardCard> => ({ ...CARD, id: 'untitled.design', kind: 'design' }),
-      generateImage: async (
+      generateImageArtifact: async (
         _project: unknown,
         _cardId: unknown,
         _prompt: unknown,

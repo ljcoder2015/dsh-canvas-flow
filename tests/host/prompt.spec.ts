@@ -40,7 +40,7 @@ const project: Project = {
 }
 
 /** Run one card's `installCardScope` against a stub context, return its text. */
-function sectionTextOf(kind: string): string {
+function sectionTextOf(kind: string, imageGeneration?: boolean): string {
   const sections: string[] = []
   const agentCtx = {
     systemPrompt: {
@@ -55,6 +55,7 @@ function sectionTextOf(kind: string): string {
     file: '文本1.md',
     kind,
     kindLabel: '文本',
+    ...(imageGeneration === undefined ? {} : { imageGeneration }),
     material: () => '',
   })
   return sections.join('\n')
@@ -164,9 +165,51 @@ describe('媒体卡的预设（F2.7）', () => {
   it('文本卡与设计卡都不带媒体那套', () => {
     for (const kind of ['markdown', 'design', 'app']) {
       const text = sectionTextOf(kind)
-      expect(text).not.toContain(TOOL_NAMES.generateImage)
       expect(text).not.toContain(TOOL_NAMES.generateVideo)
       expect(text).not.toContain(TOOL_NAMES.generateAudio)
+    }
+  })
+})
+
+describe('文本卡的图文引导（v1.92）', () => {
+  it('带「图文并茂」的纪律：先有图再有引用，路径相对本文件', () => {
+    const text = sectionTextOf('markdown')
+    expect(text).toContain('图文并茂')
+    expect(text).toContain('![caption](path)')
+    expect(text).toContain('relative to this file')
+    // 这条纪律的主体：引用不许先于文件存在——破图就是这条没守住。
+    expect(text).toContain('the image exists before the reference does')
+  })
+
+  it('提到已安装的技能可用，但产物仍然是这份 markdown', () => {
+    const text = sectionTextOf('markdown')
+    expect(text).toContain('skill tools (installed skills)')
+    expect(text).toContain('stays this markdown file')
+  })
+
+  it('配置了图片路线时，教完整的两步：落图片卡的座次，再对那张卡生成', () => {
+    const text = sectionTextOf('markdown', true)
+    expect(text).toContain('image-generation model configured')
+    expect(text).toContain(`\`${TOOL_NAMES.createOnBoard}\``)
+    expect(text).toContain(`\`${TOOL_NAMES.generateImage}\``)
+    expect(text).toContain("kind: 'image'")
+    expect(text).toContain('images/figure-1.png')
+  })
+
+  it('没配置图片路线时，明令不许引用不存在的图片，且不给生成流程', () => {
+    // 中间态（「试试看」）只会让模型编出一个引用，用户看到的是破图——两个分支必须互斥。
+    // （`canvas_create_on_board` 本来就在「不许另开一座」那句纪律里出现，所以这里只判
+    // 生成工具名与插图流程句的缺席。）
+    for (const text of [sectionTextOf('markdown'), sectionTextOf('markdown', false)]) {
+      expect(text).toContain('No image-generation model is configured')
+      expect(text).not.toContain('image-generation model configured')
+      expect(text).not.toContain(TOOL_NAMES.generateImage)
+    }
+  })
+
+  it('别的形态不带这套图文分支', () => {
+    for (const kind of ['design', 'app', 'image', 'file']) {
+      expect(sectionTextOf(kind, true)).not.toContain('图文并茂')
     }
   })
 })

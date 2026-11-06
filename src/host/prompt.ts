@@ -145,15 +145,31 @@ const MEDIA_TOOL: Readonly<Record<string, string>> = {
  * 单独抽成函数而不留在数组字面量里，是因为它是这里唯一一处**按形态分叉**的逻辑：分叉写在
  * 三元表达式里读不出「一共只有三态」，而它本身是要进判据的（`tests/host/prompt.spec.ts`）。
  */
-function artifactGuidance(kind: string, kindLabel: string, file: string): string {
+function artifactGuidance(kind: string, kindLabel: string, file: string, imageGeneration: boolean): string {
   if (kind === 'design') {
     return `- This is a **design** card: the artifact is a scene-graph design document (.design, v2). Do not edit the file with text tools — read the document with \`${TOOL_NAMES.designRead}\` and change it with \`${TOOL_NAMES.designEdit}\` batches. ${DESIGN_PRESET}`
+  }
+  if (kind === 'markdown') {
+    return `- This is a **text** card (markdown): write the artifact with the ordinary file tools, and write it 图文并茂 — structure with headings, and where a figure says more than prose, embed an image with \`![caption](path)\`, using a path **relative to this file** (\`../images/cover.png\` when the document sits in \`docs/\`); a reference to a file that was never written renders as broken text, so the image exists before the reference does. ${markdownIllustration(imageGeneration)} If this session provides skill tools (installed skills), you may use them while composing the document — the artifact itself stays this markdown file.`
   }
   const tool = MEDIA_TOOL[kind]
   if (tool !== undefined) {
     return `- This is a **${kindLabel}** card: the artifact is a binary media file (\`${file}\`), so it is not written with text tools at all. ${mediaPreset(kind, tool)}`
   }
   return '- Write the artifact by editing that file with the ordinary file tools. The canvas re-reads it from disk whenever the board is read, so no export or publish step is needed for the card to be up to date.'
+}
+
+/**
+ * 文本卡那句「插图从哪儿来」（v1.92 图文并茂）。
+ *
+ * 答案由部署配置决定，**两个分支互斥**：配置了图片生成路线就给出完整的两步流程
+ * （先落一张图片卡的座次、再对那张卡生成），没配置就明令不许引用不存在的图片——
+ * 中间态（「试试看吧」）只会让模型编出一个 `![…](x.png)`，用户看到的是破图。
+ */
+function markdownIllustration(imageGeneration: boolean): string {
+  return imageGeneration
+    ? `This deployment has an image-generation model configured: to illustrate, seat an image card first (\`${TOOL_NAMES.createOnBoard}\` with \`type: 'card'\`, \`kind: 'image'\`, and \`content\` naming a project-relative file such as \`images/figure-1.png\`), then \`${TOOL_NAMES.generateImage}\` with that card's id and a caption-grade prompt, then embed the file by its relative path.`
+    : 'No image-generation model is configured in this deployment, so illustrations cannot be produced here: never reference an image file that has not been written to disk.'
 }
 
 /**
@@ -194,6 +210,15 @@ export interface CardScopeInput {
   kind: string
   /** Human label of that kind. */
   kindLabel: string
+  /**
+   * 部署**现在**有没有一条能生成图片的路线（v1.92 图文并茂）。
+   *
+   * 缺省按「没有」处理：装配处（`card-runtime`，经 `MediaProvider.imageRouteReady`）
+   * 在装 scope 的那一刻读一次——会话中途改配置要新开（或重开）会话才生效，这是刻意
+   * 的：提示词里的句子不能每轮翻面，那会让「上一轮还不许引用、这一轮又要插图」变成
+   * 模型没法执行的指令。
+   */
+  imageGeneration?: boolean
   /** Formatted material block — the card's direct upstreams, one hop (F5.8). */
   material: () => string
 }
@@ -206,6 +231,7 @@ export interface CardScopeInput {
  */
 export function installCardScope(agentCtx: Context, input: CardScopeInput): void {
   const { project, cardId, file, kind, kindLabel } = input
+  const imageGeneration = input.imageGeneration === true
 
   agentCtx.systemPrompt.section({
     name: CARD_SECTION,
@@ -216,7 +242,7 @@ export function installCardScope(agentCtx: Context, input: CardScopeInput): void
       `Conversation for the canvas card \`${cardId}\` (kind: ${kindLabel} / \`${kind}\`) in project **${project.name}**. The card id is only a seat identity — the artifact lives at the file below.`,
       '',
       `- The artifact is the file \`${file}\`, relative to the project root \`${project.root}\`. Its absolute path is available as the \`canvas_card_path\` variable.`,
-      artifactGuidance(kind, kindLabel, file),
+      artifactGuidance(kind, kindLabel, file, imageGeneration),
       `- **A change belongs to this artifact.** This conversation has exactly one product — the file above — so a turn that asks for a change means rewriting *that* file. "tweak it again / change it to… / add this / adjust that" is a revision of what is already here, not a new artifact: work in place. (Where the artifact is the entry file of a site or an app, its sibling files are this same artifact and are edited as such — the line that must not be crossed is starting a *second* deliverable: no \`-v2\` / \`-copy\` / alternate file left for the user to pick between, and no seating another card (\`${TOOL_NAMES.createOnBoard}\`) for a change to this one.) A multi-turn conversation is meant to converge on one artifact that gets better; a new file per turn scatters the thread the user is holding, and the board ends up showing two cards where they asked for one thing fixed.`,
       '- Creating a card is the user\'s move, not yours: cards are seated on the board by them (dragging out a node, or asking for one), and a conversation never creates one as a side effect of wanting to write something. So the one case where another card is the right answer is when the user asks for a *separate* deliverable outright — then say so in words and let them create it, rather than forking silently or overwriting this artifact with something that is not it.',
       project.style.tone.trim() === '' ? '' : `- Tone of voice for this project: ${project.style.tone}.`,

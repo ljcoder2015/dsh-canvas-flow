@@ -27,10 +27,26 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { ViewerProps, ViewerRegistration } from '../types.ts'
+import type { BoardSnapshot } from '../../../../types.ts'
 import { useChrome, Slot, useEscapeSink } from '../../chrome.tsx'
 import { autosaveDelay, autosaveRetryDelay } from '../../editing/autosave.ts'
+import { resolveKindId } from '../../../../core/artifact/kind/kind-registry.ts'
+import { base64ToBytes } from '../../../../core/artifact/design/image-bytes.ts'
+import { mediaMimeOf } from '../../../../core/media/mime.ts'
+import { markdownImageSrc } from '../markdown-image.ts'
+import type { DesignImageResultWire } from '../../../../contract.ts'
 import { loadCanvasKit } from './design-canvaskit.ts'
 import { loadDesignEngine } from './design-engine-module.ts'
+import {
+  fontPercentKnown,
+  fontPercentOf,
+  fontProgressChanged,
+  fontProgressVisible,
+  formatBytes,
+  type DesignFontProgress,
+} from './design-font-progress.ts'
+import { createFrameGate, type FrameGate } from './design-frame-gate.ts'
+import { designPhaseOf, type DesignPhase } from './design-phase.ts'
 import { DESIGN_SIDE_CLASS, DesignSidePanels, FrameIcon } from './design-panels.tsx'
 import type { DesignSelectMode } from './design-panels.tsx'
 import type {
@@ -46,6 +62,8 @@ import type { CanvasKey } from '../../../ui/locales.ts'
 
 /** The viewer's honest states: engine loading, failed, live. */
 type DesignState = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready' }
+
+/** 加载盖板的两段：`engine`（资源在路上，只在第一次付）与 `paint`（首帧还没落屏，每次都付）。 */
 
 /**
  * 引擎收场里的码 → 界面文案的词典键。
@@ -258,75 +276,262 @@ function HistoryIcon({ forward }: { forward: boolean }): ReactElement {
   )
 }
 
+/** 「插图」按钮的图片 icon：山与太阳的经典图形（描边风格与 HistoryIcon 同一套）。 */
+function ImageIcon(): ReactElement {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="14"
+      height="14"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ display: 'block' }}
+    >
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <circle cx="9" cy="9" r="2" />
+      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+    </svg>
+  )
+}
+
 /**
- * 画布顶部中间那条 dock：撤销 / 重做 / 单选 / 多选。
+ * 画布顶部中间那条 dock：撤销 / 重做 / 单选 / 多选，以及图片图层（v1.96）的三个入口——
+ * 插入本地图片、AI 生成、引用画布上已有的图片产物。
  *
- * 四种按钮的语气**不一样**，这是有意的：
+ * 按钮的语气**不一样**，这是有意的：
  * - 撤销、重做是**一动就走**的动作（按下去办完事，键面上不留痕迹），所以它们没有持续高亮，
  *   只有按不动的那种灰（没得退/没得进时）。
  * - 单选、多选是**现在在哪一面**，所以走 radio 语义：aria-checked 一直亮着，永远有一枚是
  *   亮的（默认单选）。
+ * - 图片那三枚是**要展开再办事**的：生成与引用各自展开一条小面板（提示词 / 画布图片清单），
+ *   插入直接开文件选择器。三种来源殊途同归——字节交到引擎手里，落成 IMAGE 填充的图层。
  *
  * 撤销/重做在键盘上是同一条路（⌘Z / ⇧⌘Z，见 `stepHistory`）；摆在 dock 上是因为画布之外
  * 没有第二处能让人发现它们。
  */
+/** 引用清单里的一张画布图片卡（列清单时按卡片记录裁好的那几格）。 */
+interface ReferenceImage {
+  cardId: string
+  name: string
+  file: string
+}
+
 function DesignDock({
   history,
   canStep,
+  locked,
   selectMode,
   onStep,
   onSelectMode,
+  onInsertFiles,
+  onGenerate,
+  listReferenceImages,
+  onReference,
 }: {
   history: DesignHistoryState
   /** 这一步现在走不走得动（改稿在跑时不作数）。 */
   canStep: boolean
+  /** 改稿圈在跑（AI 正在写这份文档）：图片图层也是改稿，一并锁住。 */
+  locked: boolean
   selectMode: DesignSelectMode
   onStep: (forward: boolean) => void
   onSelectMode: (mode: DesignSelectMode) => void
+  /** 插入本地图片：返回一句报错，或 `null` = 成功。 */
+  onInsertFiles: (files: readonly File[]) => Promise<string | null>
+  /** AI 生成一张图并落层：返回一句报错，或 `null` = 成功。 */
+  onGenerate: (prompt: string) => Promise<string | null>
+  /** 画布上的图片产物清单（引用入口展开时现取）。 */
+  listReferenceImages: () => Promise<ReferenceImage[]>
+  /** 引用一张画布图片落层：返回一句报错，或 `null` = 成功。 */
+  onReference: (file: string) => Promise<string | null>
 }): ReactElement {
+  const [panel, setPanel] = useState<'none' | 'generate' | 'reference'>('none')
+  const [prompt, setPrompt] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [notice, setNotice] = useState<string | null>(null)
+  const [images, setImages] = useState<ReferenceImage[] | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+
+  // 结果一句话留 6 秒：成功不占地方，失败看得完（比 toast 少一套壳）。
+  useEffect(() => {
+    if (notice === null) return
+    const timer = window.setTimeout(() => setNotice(null), 6000)
+    return () => window.clearTimeout(timer)
+  }, [notice])
+
+  /** 一句收场话：报错就留下，成功就收面板。 */
+  const settle = (error: string | null): void => {
+    setNotice(error)
+    if (error === null) {
+      setPanel('none')
+      setPrompt('')
+    }
+  }
+
+  const openReference = (): void => {
+    const next = panel === 'reference' ? 'none' : 'reference'
+    setPanel(next)
+    if (next === 'reference') {
+      setImages(null)
+      void listReferenceImages()
+        .then((list) => setImages(list))
+        .catch((error: unknown) => setNotice(error instanceof Error ? error.message : '读画布失败'))
+    }
+  }
+
+  const submitGenerate = (): void => {
+    if (busy || prompt.trim() === '') return
+    setBusy(true)
+    void onGenerate(prompt)
+      .then((error) => settle(error))
+      .finally(() => setBusy(false))
+  }
+
   return (
-    <div className="dsh-canvas-design-dock" role="toolbar" aria-label="编辑工具" onPointerDown={(event) => event.stopPropagation()}>
-      <button
-        type="button"
-        title="撤销（⌘Z）"
-        aria-label="撤销"
-        disabled={!canStep || !history.undo}
-        onClick={() => onStep(false)}
-      >
-        <HistoryIcon forward={false} />
-      </button>
-      <button
-        type="button"
-        title="重做（⇧⌘Z）"
-        aria-label="重做"
-        disabled={!canStep || !history.redo}
-        onClick={() => onStep(true)}
-      >
-        <HistoryIcon forward />
-      </button>
-      <span className="dsh-canvas-design-dock-sep" />
-      <div role="radiogroup" aria-label="选择方式" className="dsh-canvas-design-dock-modes">
+    <div className="dsh-canvas-design-dock-wrap">
+      <div className="dsh-canvas-design-dock" role="toolbar" aria-label="编辑工具" onPointerDown={(event) => event.stopPropagation()}>
         <button
           type="button"
-          role="radio"
-          aria-checked={selectMode === 'single'}
-          tabIndex={selectMode === 'single' ? 0 : -1}
-          title="单选：点一下换一个图层"
-          onClick={() => onSelectMode('single')}
+          title="撤销（⌘Z）"
+          aria-label="撤销"
+          disabled={!canStep || !history.undo}
+          onClick={() => onStep(false)}
         >
-          单选
+          <HistoryIcon forward={false} />
         </button>
         <button
           type="button"
-          role="radio"
-          aria-checked={selectMode === 'multi'}
-          tabIndex={selectMode === 'multi' ? 0 : -1}
-          title="多选：点一下加一个图层；shift 点一下铺满两层之间的图层；AI 框按图层分段记提示词"
-          onClick={() => onSelectMode('multi')}
+          title="重做（⇧⌘Z）"
+          aria-label="重做"
+          disabled={!canStep || !history.redo}
+          onClick={() => onStep(true)}
         >
-          多选
+          <HistoryIcon forward />
+        </button>
+        <span className="dsh-canvas-design-dock-sep" />
+        <div role="radiogroup" aria-label="选择方式" className="dsh-canvas-design-dock-modes">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={selectMode === 'single'}
+            tabIndex={selectMode === 'single' ? 0 : -1}
+            title="单选：点一下换一个图层"
+            onClick={() => onSelectMode('single')}
+          >
+            单选
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={selectMode === 'multi'}
+            tabIndex={selectMode === 'multi' ? 0 : -1}
+            title="多选：点一下加一个图层；shift 点一下铺满两层之间的图层；AI 框按图层分段记提示词"
+            onClick={() => onSelectMode('multi')}
+          >
+            多选
+          </button>
+        </div>
+        <span className="dsh-canvas-design-dock-sep" />
+        {/* 图片图层三入口（v1.96）：插入 / 生成 / 引用。改稿圈在跑时一并锁住。 */}
+        <button
+          type="button"
+          title="插入图片：选本地图片落成图层（可多选）"
+          aria-label="插入图片"
+          disabled={locked}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          <ImageIcon />
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/png,image/jpeg,image/webp,image/gif,image/avif"
+          multiple
+          hidden
+          onChange={(event) => {
+            const files = [...(event.target.files ?? [])]
+            event.target.value = ''
+            if (files.length === 0) return
+            setBusy(true)
+            void onInsertFiles(files)
+              .then((error) => settle(error))
+              .finally(() => setBusy(false))
+          }}
+        />
+        <button
+          type="button"
+          title="生成图片：写一句提示词，按这张卡的模型配置生成并落成图层"
+          aria-expanded={panel === 'generate'}
+          disabled={locked}
+          onClick={() => setPanel(panel === 'generate' ? 'none' : 'generate')}
+        >
+          生成
+        </button>
+        <button
+          type="button"
+          title="引用画布图片：把项目里已有的图片产物落成图层"
+          aria-expanded={panel === 'reference'}
+          disabled={locked}
+          onClick={openReference}
+        >
+          引用
         </button>
       </div>
+      {panel === 'generate' ? (
+        <div className="dsh-canvas-design-dock-panel" onPointerDown={(event) => event.stopPropagation()}>
+          <input
+            type="text"
+            value={prompt}
+            autoFocus
+            placeholder="描述要生成的图片，例如：扁平风的群山插画，蓝绿色调"
+            onChange={(event) => setPrompt(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                submitGenerate()
+              } else if (event.key === 'Escape') {
+                event.preventDefault()
+                setPanel('none')
+              }
+              event.stopPropagation()
+            }}
+          />
+          <button type="button" disabled={busy || prompt.trim() === ''} onClick={submitGenerate}>
+            {busy ? '生成中…' : '生成并插入'}
+          </button>
+        </div>
+      ) : null}
+      {panel === 'reference' ? (
+        <div className="dsh-canvas-design-dock-panel" onPointerDown={(event) => event.stopPropagation()}>
+          {images === null ? (
+            <span className="dsh-canvas-design-dock-panel-empty">读取画布中…</span>
+          ) : images.length === 0 ? (
+            <span className="dsh-canvas-design-dock-panel-empty">画布上还没有图片产物</span>
+          ) : (
+            images.map((image) => (
+              <button
+                key={image.cardId}
+                type="button"
+                title={image.file}
+                disabled={busy}
+                onClick={() => {
+                  setBusy(true)
+                  void onReference(image.file)
+                    .then((error) => settle(error))
+                    .finally(() => setBusy(false))
+                }}
+              >
+                {image.name}
+              </button>
+            ))
+          )}
+        </div>
+      ) : null}
+      {notice !== null ? <div className="dsh-canvas-design-dock-notice">{notice}</div> : null}
     </div>
   )
 }
@@ -340,6 +545,50 @@ export function DesignViewer({ view }: ViewerProps) {
   const glCanvasRef = useRef<HTMLCanvasElement | null>(null)
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const [state, setState] = useState<DesignState>({ kind: 'loading' })
+  /**
+   * 首帧是否已经落到屏幕上。
+   *
+   * **盖板的撤下条件不是「引擎就好了」**：`setState({kind:'ready'})` 到第一帧之间还有一次
+   * 同步的整页录制（yoga 布局 + Skia picture，实测 200–500ms，随文档大小），那一段屏幕上
+   * 同样什么都没有。盖板留到 `draw` 真跑过一帧再撤，白屏才真正被换成了「正在绘制」这句话。
+   */
+  const [painted, setPainted] = useState(false)
+  const paintedRef = useRef(false)
+  /**
+   * 字体加载进度（v1.88）。`null` = 没有字面在路上（全在缓存里，或者还没开始）。
+   *
+   * 为什么它值得一块自己的状态：字面是这张预览里**唯一一段还在跑、用户却看不见**的加载
+   * ——四支 Inter 约 1.3MB 挡着首帧，中文字面 17.7MB 更是在首帧之后才到货，到货前含中文
+   * 的文字整段空白。没有这一行，用户分不清「还在取字体」与「这份稿子坏了」。
+   */
+  const [fontProgress, setFontProgress] = useState<DesignFontProgress | null>(null)
+  /** 字体进度的待渲染值（`undefined` = 这一帧没有新值）。见下面的合帧闸。 */
+  const pendingFontRef = useRef<DesignFontProgress | null | undefined>(undefined)
+  /**
+   * 字体进度的**合帧闸**：一帧只渲染一次。
+   *
+   * 字面是按流读的，17.7MB 会来成百上千次回调（64KB 一块）；本机 50ms 内就读完，每次都
+   * setState 等于在这 50ms 里插进几十次 React 渲染——而那正是「画面刚出来」的时刻。
+   * 并到一帧不改变语义（最坏晚 16ms），却把那一串并成一次（闸本身与 `onRepaint` 共用
+   * `design-frame-gate.ts`）。
+   */
+  const fontGateRef = useRef<FrameGate | null>(null)
+  if (fontGateRef.current === null) {
+    fontGateRef.current = createFrameGate(() => {
+      const next = pendingFontRef.current
+      pendingFontRef.current = undefined
+      if (next === undefined) return
+      setFontProgress((prev) => (fontProgressChanged(prev, next) ? next : prev))
+    }, requestAnimationFrame, cancelAnimationFrame)
+  }
+  /** 打开时刻与引擎就绪时刻：只为在控制台留一条能复盘的耗时记录（见 `noteFirstPaint`）。 */
+  const openedAtRef = useRef(0)
+  const engineAtRef = useRef(0)
+  /** `onRepaint` 的合帧闸（见 `scheduleRepaint`）。建一次，跟着组件活。 */
+  const gateRef = useRef<FrameGate | null>(null)
+  if (gateRef.current === null) {
+    gateRef.current = createFrameGate(() => drawRef.current(), requestAnimationFrame, cancelAnimationFrame)
+  }
 
   // The viewport lives in a ref: pan/zoom mutate it and redraw directly, so a
   // drag never pays a React render per pointer event. `interacted` decides
@@ -403,6 +652,22 @@ export function DesignViewer({ view }: ViewerProps) {
   const [labelEdit, setLabelEdit] = useState<{ id: string; draft: string } | null>(null)
   // Escape 取消会先卸载 input、再触发一次 blur：用这一位跳过那次提交（否则刚取消就被写回）。
   const labelCancelRef = useRef(false)
+
+  /**
+   * `onRepaint` 的**合帧闸**：同一帧里的多次重画请求只画一次。
+   *
+   * 引擎会在「字体到货、场景变更、切页」时回头叫我们重画。中文字面（17.7MB）注册进来的
+   * 那一刻，core 的 `settleFontDemand` 会**逐节点**结算一遍，实测一口气叫了 88–153 次
+   * ——每次都老实跑一遍 `draw` 就是同一帧里把整页重录上百遍，卡顿全落在「画面刚出来」之后。
+   * 合并到一帧不改变语义（最坏延后 16ms），却把那一串并成一次（闸本身见
+   * `design-frame-gate.ts`）。
+   *
+   * 定义在 `draw` 之前，是因为建引擎那条 effect 要把它当 `onRepaint` 交出去；它只碰
+   * `drawRef`（ref 在首渲染就存在），所以这里没有先有鸡还是先有蛋的问题。
+   */
+  const scheduleRepaint = useCallback(() => {
+    gateRef.current?.schedule()
+  }, [])
 
   const refreshSelection = useCallback(() => {
     const engine = engineRef.current
@@ -493,6 +758,10 @@ export function DesignViewer({ view }: ViewerProps) {
       return
     }
     setState({ kind: 'loading' })
+    setPainted(false)
+    paintedRef.current = false
+    openedAtRef.current = performance.now()
+    engineAtRef.current = 0
     let cancelled = false
     void (async () => {
       // Both loads are independent: the WASM runtime and the 2MB engine chunk.
@@ -514,7 +783,7 @@ export function DesignViewer({ view }: ViewerProps) {
         gl,
         runtime,
         envelope: view.text,
-        onRepaint: () => drawRef.current(),
+        onRepaint: scheduleRepaint,
       })
       if (cancelled) {
         if (outcome.kind === 'ready') outcome.engine.dispose()
@@ -526,12 +795,41 @@ export function DesignViewer({ view }: ViewerProps) {
       }
       engineRef.current = outcome.engine
       lastSyncedRef.current = view.text
+      engineAtRef.current = performance.now()
       setState({ kind: 'ready' })
     })()
     return () => {
       cancelled = true
     }
-  }, [endHold, view.present, view.text])
+    // `t` 不在依赖里：它是外壳每次渲染都给的新函数，挂上去会让引擎跟着每次重渲染重建。
+    // 这个 effect 只在「盘的文档变了」时该跑，文案只用在失败那一支。
+  }, [endHold, scheduleRepaint, view.present, view.text])
+
+  /**
+   * 订阅字体加载进度。
+   *
+   * 挂一次、活到卸载（不是跟着引擎走）：最长的那一段在引擎建完之后才开始——中文字面
+   * 17.7MB 是后台到货的，首帧不等它。跟着引擎退订的话，进度条会在最需要它的那一刻消失。
+   *
+   * 进度可能比这块界面晚到（chunk 还在路上），所以订阅本身是异步的；`cancelled` 兜住
+   * 「取到 chunk 之前就被关掉」。
+   */
+  useEffect(() => {
+    let stop: (() => void) | undefined
+    let cancelled = false
+    void loadDesignEngine().then((module) => {
+      if (cancelled || module?.subscribeDesignFonts === undefined) return
+      stop = module.subscribeDesignFonts((next) => {
+        // 逐块读会来得很密（17.7MB / 64KB ≈ 280 次）——排到下一帧，同帧只画最后一个值。
+        pendingFontRef.current = next
+        fontGateRef.current?.schedule()
+      })
+    })
+    return () => {
+      cancelled = true
+      stop?.()
+    }
+  }, [])
 
   // Release the engine when the viewer goes away.
   useEffect(() => {
@@ -666,6 +964,24 @@ export function DesignViewer({ view }: ViewerProps) {
     onDirtyRef.current()
   }, [])
 
+  /**
+   * 首帧落屏时留一条耗时记录。
+   *
+   * 这一面「为什么慢」只有两段，而它们混在一起看不出来：引擎就绪（一次性：wasm + chunk +
+   * 字面）与首帧绘制（每次都要：布局 + 整页录制）。分开打出来，下一次有人说慢，控制台里
+   * 就有现成的数——不用再把这条链路重跑一遍。
+   */
+  const noteFirstPaint = useCallback(() => {
+    if (openedAtRef.current === 0) return
+    const now = performance.now()
+    const engine = engineAtRef.current === 0 ? now : engineAtRef.current
+    console.info(
+      `[dsh-canvas] 设计预览首帧 ${Math.round(now - openedAtRef.current)}ms`
+        + `（引擎就绪 ${Math.round(engine - openedAtRef.current)}ms，绘制 ${Math.round(now - engine)}ms）`,
+    )
+    openedAtRef.current = 0
+  }, [])
+
   const draw = useCallback(() => {
     const engine = engineRef.current
     const wrap = wrapRef.current
@@ -680,12 +996,18 @@ export function DesignViewer({ view }: ViewerProps) {
       viewportRef.current = engine.fit(width, height)
     }
     engine.render(viewportRef.current, width, height, dpr)
+    // 画面真的出来了：这时才撤 loading 盖板（见 `painted`）。
+    if (!paintedRef.current) {
+      paintedRef.current = true
+      setPainted(true)
+      noteFirstPaint()
+    }
     paintHold()
     paintFrame()
     paintLabels()
     const label = zoomLabelRef.current
     if (label !== null) label.textContent = `${Math.round(viewportRef.current.scale * 100)}%`
-  }, [paintHold, paintFrame, paintLabels])
+  }, [paintHold, paintFrame, paintLabels, noteFirstPaint])
   drawRef.current = draw
 
   // 方块是 React 挂的、位置是命令式写的（见 paintHold）：挂载后补一次，第一帧就落在对的地方。
@@ -774,6 +1096,78 @@ export function DesignViewer({ view }: ViewerProps) {
     interactedRef.current = true
     draw()
   }, [draw])
+
+  // ── 图片图层（v1.96）：三个入口共用「字节交引擎、围绕视口中心落图」这半步。 ──
+
+  /** 视口中心的**世界**坐标（插图落点：镜头看着哪儿，图就落在哪儿）。 */
+  const imageWorldCenter = useCallback(() => {
+    const wrap = wrapRef.current
+    const viewport = viewportRef.current
+    if (wrap === null || viewport === null) return { x: 0, y: 0 }
+    return {
+      x: (wrap.clientWidth / 2 - viewport.x) / viewport.scale,
+      y: (wrap.clientHeight / 2 - viewport.y) / viewport.scale,
+    }
+  }, [])
+
+  /** 把几份图片字节落成图层；返回一句报错，或 `null` = 成功。 */
+  const insertImageFiles = useCallback(async (files: readonly File[]): Promise<string | null> => {
+    const engine = engineRef.current
+    if (engine === null) return '预览还没准备好，稍等一下再试'
+    try {
+      const created = await engine.addImageLayers(files, imageWorldCenter())
+      if (created.length === 0) return '没有落成图层：只认 png / jpeg / webp / gif / avif，且要解得出尺寸'
+      return null
+    } catch (error) {
+      return error instanceof Error ? error.message : '插入图片失败'
+    }
+  }, [imageWorldCenter])
+
+  /** AI 生成一张图并落层：宿主生成、落盘到项目，字节带回由这里转成图层。 */
+  const generateImageLayer = useCallback(
+    async (prompt: string): Promise<string | null> => {
+      try {
+        const result = (await chrome.bridge.generateImage(chrome.projectId, chrome.cardId, prompt)) as DesignImageResultWire
+        if (!result.ok) return result.reason === '' ? '生成失败' : result.reason
+        const bytes = base64ToBytes(result.base64)
+        const name = result.path.split('/').pop()?.replace(/\.[^.]+$/, '') || '生成图片'
+        return await insertImageFiles([new File([bytes], `${name}.png`, { type: 'image/png' })])
+      } catch (error) {
+        return error instanceof Error ? error.message : '生成图片失败'
+      }
+    },
+    [chrome, insertImageFiles],
+  )
+
+  /** 画布上的图片产物清单（引用入口展开时现取一张板面）。 */
+  const listReferenceImages = useCallback(async (): Promise<ReferenceImage[]> => {
+    const board = (await chrome.bridge.readBoard(chrome.projectId)) as BoardSnapshot
+    return board.cards
+      // 形态判据走唯一的 kind 清单（resolveKindId 归一别名），不写裸字符串比较。
+      .filter((card) => !card.missing && resolveKindId(card.kind) === 'image')
+      .map((card) => ({ cardId: card.id, name: card.name === '' ? card.file : card.name, file: card.file }))
+  }, [chrome])
+
+  /** 引用一张画布图片：经工作区路由取字节，落成图层。 */
+  const referenceImageLayer = useCallback(
+    async (file: string): Promise<string | null> => {
+      try {
+        // `/${file}` = 项目根相对引用，markdownImageSrc 会验穿越、拼工作区路由。
+        const url = markdownImageSrc(chrome.projectId, view.file, `/${file}`)
+        if (url === undefined) return '这个路径不能作为图片引用'
+        const response = await fetch(url)
+        if (!response.ok) return `取图片失败（HTTP ${String(response.status)})`
+        const bytes = new Uint8Array(await response.arrayBuffer())
+        const name = file.split('/').pop()?.replace(/\.[^.]+$/, '') || '图片'
+        // 类型按扩展名判（宿主可能给 octet-stream；引擎那张类型表认 mime，不认扩展名）。
+        const type = mediaMimeOf(file.split('.').pop()?.toLowerCase() ?? '') ?? 'image/png'
+        return await insertImageFiles([new File([bytes], `${name}.png`, { type })])
+      } catch (error) {
+        return error instanceof Error ? error.message : '引用图片失败'
+      }
+    },
+    [chrome, view.file, insertImageFiles],
+  )
 
   /**
    * 退一步 / 进一步。HUD 那两枚按钮与 ⌘Z / ⇧⌘Z 走**同一条路**——不然「点了有用、按了没用」
@@ -1130,7 +1524,7 @@ export function DesignViewer({ view }: ViewerProps) {
   // ⌘/Ctrl+Z（+Shift）撤销/重做。
   useEffect(() => {
     const wrap = wrapRef.current
-    if (wrap === null || state.kind !== 'ready') return
+    if (wrap === null || state.kind !== 'ready' || !painted) return
     const held = new Set<string>()
     let raf = 0
     let last = 0
@@ -1238,7 +1632,7 @@ export function DesignViewer({ view }: ViewerProps) {
       wrap.removeEventListener('blur', onBlur)
       if (raf !== 0) cancelAnimationFrame(raf)
     }
-  }, [state, draw, zoomAt, viewCenter, refreshSelection, stepHistory])
+  }, [state, painted, draw, zoomAt, viewCenter, refreshSelection, stepHistory])
 
   /**
    * 改稿落地就收圈。
@@ -1264,11 +1658,13 @@ export function DesignViewer({ view }: ViewerProps) {
     }
   }, [chrome, endHold, hold])
 
-  // 卸载时收掉挂着的落盘时钟与改稿的兜底时钟。
+  // 卸载时收掉挂着的落盘时钟、改稿的兜底时钟，以及还没跑的那一帧重画。
   useEffect(() => {
     return () => {
       if (saveTimerRef.current !== null) window.clearTimeout(saveTimerRef.current)
       if (holdTimerRef.current !== null) window.clearTimeout(holdTimerRef.current)
+      gateRef.current?.stop()
+      fontGateRef.current?.stop()
     }
   }, [])
 
@@ -1301,12 +1697,37 @@ export function DesignViewer({ view }: ViewerProps) {
     paintLabels()
   }, [labelKey, mode, paintLabels])
 
+  // 加载期的阶段：`engine` 是资源在路上（一次性），`paint` 是首帧还没落屏（每次都付）。
+  // 两段都要盖住——`ready` 但没画完的那 200–500ms 同样是一片白。判定在 design-phase.ts。
+  const phase: DesignPhase | null = designPhaseOf(state, painted)
+  // 字体进度：只在「还有字面在路上」时说。全缓存命中的那些打开没有可讲的东西——一条停在
+  // 100% 的进度条只会让人以为还有东西在加载（判定在 design-font-progress.ts）。
+  const fontsLoading: DesignFontProgress | null = fontProgressVisible(fontProgress) ? fontProgress : null
+  /**
+   * 能不能画条：分母要覆盖本轮全部字面。
+   *
+   * 分母不齐时只报「字体 4/5」。真机上踩过：四支 Inter 先到齐，条冲到 99% 停住，中文字面
+   * 一开读分母变成 18.2MB，数字**掉回 7%**——一条会倒退的进度条比没有更糟。
+   */
+  const fontPercent = fontsLoading !== null && fontPercentKnown(fontsLoading) ? fontPercentOf(fontsLoading) : null
+  /**
+   * 字体那一行的字面：`字体 3/5 · 4.2 MB / 18.2 MB`。
+   *
+   * 分母（总字节）还没从响应头回来时只报支数：那一刻按字节折算出来的百分比是假的，
+   * 而「3/5 支」本身是真的。
+   */
+  const fontLine = fontsLoading === null
+    ? ''
+    : `${t('canvas.design.fontsLoading', { done: String(fontsLoading.done), total: String(fontsLoading.total) })}`
+      + (fontsLoading.totalBytes > 0 ? ` · ${formatBytes(fontsLoading.bytes)} / ${formatBytes(fontsLoading.totalBytes)}` : '')
+
   return (
     <>
       {/* 模式开关长在弹窗 header（× 左侧）。**必须挂在画布 wrap 之外**：Slot 的
           内容沿 React 树冒泡，会吃到 wrap 的 onPointerDown——画布一
-          setPointerCapture，click 就落在捕获元素上，按钮永远收不到点击。 */}
-      {state.kind === 'ready' ? (
+          setPointerCapture，click 就落在捕获元素上，按钮永远收不到点击。
+          首帧没落屏之前不给：这一面还没有可切换的东西。 */}
+      {state.kind === 'ready' && painted ? (
         <Slot at="header">
           {/* 与 markdown 编辑面同一副开关（dsh-canvas-modeswitch）：radio 语义，
               aria-checked 直接说明「现在在哪一面」。 */}
@@ -1354,6 +1775,41 @@ export function DesignViewer({ view }: ViewerProps) {
         {/* The GL canvas mounts with the doc (the Skia surface needs the element),
             but stays invisible until the engine flips it on after first paint. */}
         <canvas ref={glCanvasRef} style={{ visibility: 'hidden' }} />
+        {/* 加载盖板：两段各一句话（见 DesignPhase）。它必须留在 DOM 里直到**首帧真的画完**
+            ——`ready` 只是引擎有了，布局与整页录制还在后头，那一段同样是白屏。
+            底色与画布一致（#e9ebef，见 styles.ts），撤下时不会闪一下别的颜色。
+            字体那一行只在**还有字面在路上**时出现：它是这张预览里唯一「还在跑却看不见」
+            的加载（中文字面 17.7MB 在首帧之后才到货，到货前含中文的文字整段空白）。 */}
+        {phase === null ? null : (
+          <div className="dsh-canvas-design-loading">
+            <span className="dsh-canvas-design-loading-ring" aria-hidden="true" />
+            {/* 主文案才是读屏该念的那一句；进度条自己带 progressbar 语义，不挂在 live 区里
+                ——逐块变化的数字被念一遍就够吵的了。 */}
+            <span className="dsh-canvas-design-loading-text" role="status">
+              {t(phase === 'engine' ? 'canvas.design.loadingEngine' : 'canvas.design.loadingPaint')}
+            </span>
+            <span className="dsh-canvas-design-loading-hint">
+              {t(phase === 'engine' ? 'canvas.design.loadingEngineHint' : 'canvas.design.loadingPaintHint')}
+            </span>
+            {fontsLoading === null ? null : (
+              <>
+                {fontPercent === null ? null : (
+                  <span
+                    className="dsh-canvas-design-loading-bar"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={fontPercent}
+                    aria-label={fontLine}
+                  >
+                    <i style={{ width: `${fontPercent}%` }} />
+                  </span>
+                )}
+                <span className="dsh-canvas-design-loading-fonts" aria-hidden="true">{fontLine}</span>
+              </>
+            )}
+          </div>
+        )}
         {/* 改稿圈：被改的那几个图层各一枚方块，流光扫的就是它们（位置由 draw 直写）。
             只在编辑态画——预览是交付给外人看的干净画面，不该带运行中的痕迹。 */}
         {hold !== null && mode === 'edit' ? (
@@ -1473,13 +1929,18 @@ export function DesignViewer({ view }: ViewerProps) {
           dock={<DesignDock
             history={history}
             canStep={canStep}
+            locked={hold !== null}
             selectMode={selectMode}
             onStep={stepHistory}
             onSelectMode={setSelectMode}
+            onInsertFiles={insertImageFiles}
+            onGenerate={generateImageLayer}
+            listReferenceImages={listReferenceImages}
+            onReference={referenceImageLayer}
           />}
         />
       ) : null}
-      {state.kind === 'ready' ? (
+      {state.kind === 'ready' && painted ? (
         <div className="dsh-canvas-design-hud" onPointerDown={(event) => event.stopPropagation()}>
           <button type="button" title="缩小" aria-label="缩小" onClick={() => {
             const center = viewCenter()
@@ -1502,6 +1963,13 @@ export function DesignViewer({ view }: ViewerProps) {
           <button type="button" title="居中显示全部容器" onClick={fitView}>
             适应
           </button>
+          {/* 盖板撤了、字面还在路上（中文字面 17.7MB 就是这种）：留一枚小胶囊接着报。
+              它不带左边框——那样它出现/消失时 hint 前面那条竖线会跟着挪，像界面在抖。 */}
+          {fontsLoading === null ? null : (
+            <span className="dsh-canvas-design-hud-fonts" title={fontLine}>
+              {t('canvas.design.fontsLoading', { done: String(fontsLoading.done), total: String(fontsLoading.total) })}
+            </span>
+          )}
           <span className="dsh-canvas-design-hud-hint">
             {mode === 'edit' ? '点选拖移 · 空格+拖动平移 · Q/E 缩放' : 'WASD 平移 · Q/E 缩放'}
           </span>

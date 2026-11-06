@@ -24,39 +24,14 @@ import { createReadStream, existsSync, statSync } from 'node:fs'
 import { extname, join, normalize } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
+import { registerRoute, type RouteRequest, type RouteResponse } from './web-server.ts'
 
 /** The route prefix the browser fetches plugin assets under. */
 export const ASSET_ROUTE = '/dsh-canvas/assets'
 
-/** The slice of the webServer service this module uses. */
-interface WebServerFace {
-  register(route: {
-    kind: 'exact' | 'prefix'
-    path: string
-    handler: (req: AssetRequest, res: AssetResponse) => void
-  }): () => void
-}
-
-/** Minimal request/response shapes the handler touches. */
-interface AssetRequest {
-  method?: string
-  url?: string
-  /** Node's lower-cased header map; only the conditional-request headers are read. */
-  headers?: Readonly<Record<string, string | string[] | undefined>>
-}
-interface AssetResponse {
-  writeHead(status: number, headers: Record<string, string | number>): unknown
-  end(body?: unknown): unknown
-}
-
-function webServerFace(ctx: Context): WebServerFace | undefined {
-  // `ctx.get` (like `presetFace` in core/session/agent-preset.ts), not a
-  // property access: cordis throws `cannot get property … without inject` on
-  // `ctx.webServer` when the service is declared but not injected here, which
-  // would kill the whole plugin tree at load time instead of degrading.
-  const face = ctx.get('webServer') as WebServerFace | undefined
-  return face !== undefined && typeof face.register === 'function' ? face : undefined
-}
+/** 这两个别名是老名字：处理函数的签名写在这两条路由各自的文件里，形状由 `web-server.ts` 定。 */
+type AssetRequest = RouteRequest
+type AssetResponse = RouteResponse
 
 /**
  * Directory this plugin's runtime assets are built into (`lib/assets/`).
@@ -149,23 +124,13 @@ const CONTENT_TYPES: Readonly<Record<string, string>> = {
  * assets beside the test runner do not exist.
  */
 export function registerAssetRoute(ctx: Context, from: string = import.meta.url): void {
-  const register = (host: Context): void => {
-    const server = webServerFace(host)
-    if (server === undefined) return
-    host.effect(() => {
-      const dispose = server.register({
-        kind: 'prefix',
-        path: ASSET_ROUTE,
-        handler: (req, res) => serveAsset(req, res, from),
-      })
-      return () => dispose()
-    }, 'dsh-canvas: asset route')
-  }
-  if (webServerFace(ctx) !== undefined) {
-    register(ctx)
-  } else {
-    ctx.inject(['webServer'], register as never)
-  }
+  // 服务怎么取、路由怎么跟着生命周期走，都在 `web-server.ts` 里（两条路由共用一份，
+  // 包括 `ctx.get` 而不是属性访问那条教训）。
+  registerRoute(ctx, {
+    path: ASSET_ROUTE,
+    label: 'dsh-canvas: asset route',
+    handler: (req, res) => serveAsset(req, res, from),
+  })
 }
 
 /** Serve one file from `lib/assets/`, or 404 anything else. */

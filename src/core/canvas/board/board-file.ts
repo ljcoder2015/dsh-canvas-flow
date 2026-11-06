@@ -21,9 +21,10 @@
  * **本模块是纯的**：编解码、身份判定与「该补哪些卡片/边/便签」都做成对普通数据的函数，
  * 于是每一条都能在容器外测；读写盘与表都归 `host/board-file.ts`。
  */
-import type { CardId, NoteId, Point, ProjectId, Source, StyleProfile } from '../../../types.ts'
+import type { CardId, MediaParams, NoteId, Point, ProjectId, Source, StyleProfile } from '../../../types.ts'
 import { nextFreeSeat, type Seat, type SeatInput } from './board.ts'
 import { sourceIdOf, validateEdge, type EdgeRef } from './source-store.ts'
+import { normalizeMediaParams } from '../../media/editing.ts'
 
 /**
  * The folder the canvas keeps its own state in, relative to the project root.
@@ -77,6 +78,13 @@ export interface BoardFileCard {
    * `undefined` 即「交给配置里第一个对得上族的模型」。
    */
   mediaModel?: string
+  /**
+   * 这张卡设下的生成参数（媒体编辑台），跟着作品走。
+   *
+   * 蒙版、首尾帧、运镜是「这张片怎么做的」的制作决定，与 `mediaModel` 同一条纪律：
+   * 没设过就不写（写出去的文件与这个字段出现之前逐字节相同）。
+   */
+  mediaParams?: MediaParams
   /**
    * 产物的真实宽高比（宽 ÷ 高，F3.11），跟着作品走。
    *
@@ -145,6 +153,8 @@ export function composeBoardFile(content: BoardFileContent): string {
       ...(card.empty === true ? { empty: true } : {}),
       // 只在选过时写：没选过的画布与这个字段出现之前逐字节相同。
       ...(card.mediaModel !== undefined && card.mediaModel !== '' ? { mediaModel: card.mediaModel } : {}),
+      // 编辑台的参数同理：没设过的画布与这个字段出现之前逐字节相同。
+      ...(card.mediaParams !== undefined ? { mediaParams: card.mediaParams } : {}),
       // 同理：没量过比例的画布与这个字段出现之前逐字节相同。
       ...(typeof card.aspect === 'number' && card.aspect > 0 ? { aspect: card.aspect } : {}),
     }))
@@ -203,6 +213,13 @@ export function parseBoardFile(text: string): BoardFileRead {
         const file = text1(entry['file'])
         const name = text1(entry['name'])
         const mediaModel = text1(entry['mediaModel'])
+        // 窄读者复用归一（`normalizeMediaParams`）：非法档位、空串、结构不对的条目都收敛成
+        // 「没设」——文件是人手可编辑的，这里不信任任何一个字段。
+        const raw = entry['mediaParams']
+        const params =
+          typeof raw === 'object' && raw !== null
+            ? normalizeMediaParams(raw as Record<string, unknown>)
+            : undefined
         const aspect = ratio(entry['aspect'])
         return [
           {
@@ -215,6 +232,8 @@ export function parseBoardFile(text: string): BoardFileRead {
             ...(entry['empty'] === true ? { empty: true } : {}),
             // 没写 = 没选过（交给自动挑），与写出去那一侧是同一条判断。
             ...(mediaModel !== '' ? { mediaModel } : {}),
+            // 没写或写坏了 = 没设过参数。
+            ...(params === undefined ? {} : { mediaParams: params }),
             // 非正数 / 不是数字一律读作「没量过」：卡片按默认比例坐，而不是被一条坏数据撑坏。
             ...(aspect === undefined ? {} : { aspect }),
           },
@@ -343,6 +362,8 @@ export interface PlannedSeat extends Seat {
   empty?: boolean
   /** 这张卡由哪个模型生成（F2.7），文件里带了才带得回来。 */
   mediaModel?: string
+  /** 这张卡设下的生成参数（媒体编辑台），文件里带了才带得回来。 */
+  mediaParams?: MediaParams
   /** 产物的真实宽高比（F3.11），文件里带了才带得回来。 */
   aspect?: number
 }
@@ -386,6 +407,7 @@ export function planSeats(input: SeatPlanInput): PlannedSeat[] {
       ...(card.name === undefined ? {} : { name: card.name }),
       ...(card.empty === true ? { empty: true } : {}),
       ...(card.mediaModel === undefined ? {} : { mediaModel: card.mediaModel }),
+      ...(card.mediaParams === undefined ? {} : { mediaParams: card.mediaParams }),
       ...(card.aspect === undefined ? {} : { aspect: card.aspect }),
     })
     seats.push({ id: card.id, file, position })

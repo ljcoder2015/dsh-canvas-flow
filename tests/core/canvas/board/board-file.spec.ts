@@ -118,6 +118,50 @@ describe('board file envelope', () => {
     }
   })
 
+  it('carries the generation params a card set (媒体编辑台), and writes nothing when it never set any', () => {
+    // 蒙版、首尾帧、运镜是「这张片怎么做的」的制作决定，随目录走（与 mediaModel 同一条纪律）。
+    const set = board({
+      cards: [
+        {
+          id: 'ab',
+          file: 'cover.png',
+          position: { x: 48, y: 170 },
+          mediaParams: { editMode: 'inpaint', maskPath: 'images/mask.png' },
+        },
+      ],
+    })
+    const text = composeBoardFile(set)
+    expect(text).toContain('"mediaParams"')
+    expect(parseBoardFile(text)).toEqual({ kind: 'parsed', content: set })
+
+    // 视频卡那组字段同样走得通。
+    const video = board({
+      cards: [
+        {
+          id: 'cd',
+          file: 'clip.mp4',
+          position: { x: 48, y: 170 },
+          mediaParams: { firstFramePath: 'images/a.png', lastFramePath: 'images/b.png', camera: 'push_in' },
+        },
+      ],
+    })
+    expect(parseBoardFile(composeBoardFile(video))).toEqual({ kind: 'parsed', content: video })
+
+    const unset = board()
+    expect(composeBoardFile(unset)).not.toContain('mediaParams')
+  })
+
+  it('reads a damaged params entry as "no params" instead of letting one hand-edit break the card', () => {
+    // 文件是人手可编辑的：空对象、认不出的档位、不是对象——都收敛成「没设」。
+    for (const bad of ['{}', '{"editMode":"in-paint"}', '"inpaint"', 'null']) {
+      const text = composeBoardFile(board()).replace('"position": { "x": 48', `"mediaParams": ${bad}, "position": { "x": 48`)
+      const parsed = parseBoardFile(text)
+      expect(parsed.kind, bad).toBe('parsed')
+      const card = parsed.kind === 'parsed' ? parsed.content.cards.find((entry) => entry.id === 'brief.md') : undefined
+      expect(card?.mediaParams, bad).toBeUndefined()
+    }
+  })
+
   it('carries the name a user gave a card (F1.12), and stays silent when they gave none', () => {
     // A name is the user's word for the work, so it travels like the seating
     // does: a folder handed to a colleague shows the board they named. A card
@@ -335,6 +379,20 @@ describe('planSeats', () => {
     })
     expect(seats).toEqual([
       { id: 'ab', file: 'cover.png', aspect: 0.5625, position: { x: 1, y: 2 } },
+    ])
+  })
+
+  it('carries a card’s generation params into the seat it restores (媒体编辑台)', () => {
+    const params = { editMode: 'inpaint' as const, maskPath: 'images/mask.png' }
+    const seats = planSeats({
+      seated: [],
+      filed: [{ id: 'ab', file: 'cover.png', mediaParams: params, position: { x: 1, y: 2 } }],
+      scanned: ['cover.png'],
+      gap: 88,
+      mint,
+    })
+    expect(seats).toEqual([
+      { id: 'ab', file: 'cover.png', mediaParams: params, position: { x: 1, y: 2 } },
     ])
   })
 

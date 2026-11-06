@@ -426,6 +426,92 @@ describe('markdown rendering', () => {
     const html = renderMarkdown('1. first\n2. second')
     expect(html.replace(/\n/g, '')).toContain('<ol class="dsh-md-list"><li>first</li><li>second</li></ol>')
   })
+
+  it('renders an image through the resolver the caller supplies', () => {
+    // v1.92 图文：相对路径在浏览器里没有基准 URL，src 必须经过解析器换写成能加载的地址。
+    const html = renderMarkdown('前文 ![结构图](images/fig-1.png) 后文', {
+      imageSrc: (src) => (src === 'images/fig-1.png' ? '/dsh-canvas/workspace/p1/images/fig-1.png' : undefined),
+    })
+    expect(html).toContain(
+      '<img class="dsh-md-img" src="/dsh-canvas/workspace/p1/images/fig-1.png" alt="结构图" loading="lazy">',
+    )
+    expect(html).toContain('<p>')
+  })
+
+  it('renders a standalone image line as its own block', () => {
+    const html = renderMarkdown('![封面](cover.png)', { imageSrc: (src) => src })
+    expect(html).toContain('<img class="dsh-md-img" src="cover.png"')
+  })
+
+  it('accepts a src with spaces and strips a quoted title', () => {
+    // 中文文档里 `图 1.png` 是常态；`"说明"` 是 markdown 的标题，不是地址的一部分。
+    const asked: string[] = []
+    const html = renderMarkdown('![图](images/图 1.png "第一张")', {
+      imageSrc: (src) => {
+        asked.push(src)
+        return src
+      },
+    })
+    expect(asked).toEqual(['images/图 1.png'])
+    expect(html).toContain('src="images/图 1.png"')
+  })
+
+  it('keeps a bare parenthesised filename intact', () => {
+    // 不带引号的 `(1)` 是文件名：`fig (1).png` 是一张真图，剥掉它就成了 404。
+    const asked: string[] = []
+    renderMarkdown('![图](fig (1).png)', {
+      imageSrc: (src) => {
+        asked.push(src)
+        return src
+      },
+    })
+    expect(asked).toEqual(['fig (1).png'])
+  })
+
+  it('does not let one image on a line swallow the next', () => {
+    // 正则必须非贪婪：一行两张图时贪婪会把 `) ![b](y.png` 也算进第一张的 src。
+    const asked: string[] = []
+    const html = renderMarkdown('![a](x.png) ![b](y.png)', {
+      imageSrc: (src) => {
+        asked.push(src)
+        return src
+      },
+    })
+    expect(asked).toEqual(['x.png', 'y.png'])
+    expect(html).not.toContain('![b]')
+  })
+
+  it('leaves an unresolvable image as literal text, not a broken <img>', () => {
+    // 渲染不了要说渲染不了：原文照抄，写文档的人看得见引用没落上——少一段比破图诚实。
+    const html = renderMarkdown('![缺失](gone.png)', { imageSrc: () => undefined })
+    expect(html).not.toContain('<img')
+    expect(html).toContain('![缺失](gone.png)')
+  })
+
+  it('without a resolver renders only remote and inline images', () => {
+    // 没有上下文换写 src 的调用方（卡片小图）拿不到相对路径的基准 URL：远端与
+    // data:image 放行，相对路径留作文字——两者都不是破图。
+    const html = renderMarkdown('![a](https://example.com/a.png)\n\n![b](data:image/png;base64,AAAA)\n\n![c](x.png)')
+    expect(html).toContain('src="https://example.com/a.png"')
+    expect(html).toContain('src="data:image/png;base64,AAAA"')
+    expect(html).toContain('![c](x.png)')
+    expect(html.match(/<img/g)).toHaveLength(2)
+  })
+
+  it('escapes the alt text and the resolved src, and refuses hostile resolutions', () => {
+    const html = renderMarkdown('![<b>&](a.png)', { imageSrc: () => 'a.png?x=1&y=2' })
+    expect(html).toContain('alt="&lt;b&gt;&amp;"')
+    expect(html).toContain('src="a.png?x=1&amp;y=2"')
+    // 换写结果里的脚本协议、引号、哨兵控制字符一律拒绝——解析器是自己写的，产物内容不是。
+    for (const hostile of ['javascript:alert(1)', 'java\u0001script:x', 'a"b', '<script>']) {
+      expect(renderMarkdown('![x](a.png)', { imageSrc: () => hostile })).not.toContain('<img')
+    }
+  })
+
+  it('does not treat image syntax inside a fenced block as an image', () => {
+    const html = renderMarkdown('```\n![x](y.png)\n```', { imageSrc: (src) => src })
+    expect(html).not.toContain('<img')
+  })
 })
 
 describe('delimited parsing', () => {

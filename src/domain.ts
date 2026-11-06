@@ -12,6 +12,14 @@
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
 import { z } from 'zod'
+import {
+  CAMERA_MODES,
+  IMAGE_BACKGROUNDS,
+  IMAGE_EDIT_MODES,
+  IMAGE_QUALITIES,
+  IMAGE_RATIOS,
+  IMAGE_RESOLUTIONS,
+} from './core/media/editing.ts'
 
 /** Board position of a record. */
 const point = z.object({ x: z.number(), y: z.number() })
@@ -19,6 +27,26 @@ const point = z.object({ x: z.number(), y: z.number() })
 const viewport = z.object({ x: z.number(), y: z.number(), zoom: z.number().positive() })
 /** Per-project style profile (F9.1). */
 const styleProfile = z.object({ palette: z.array(z.string()), font: z.string(), tone: z.string() })
+
+/**
+ * 一张媒体卡设下的生成参数（媒体编辑台）。档位清单与归一规则在 `core/media/editing.ts`
+ * ——这里只照抄形状，判据不抄两份。
+ */
+const mediaParamsRecord = z.object({
+  editMode: z.enum(IMAGE_EDIT_MODES).optional(),
+  maskPath: z.string().max(400).optional(),
+  outpaintSize: z.string().max(40).optional(),
+  firstFramePath: z.string().max(400).optional(),
+  lastFramePath: z.string().max(400).optional(),
+  camera: z.enum(CAMERA_MODES).optional(),
+  quality: z.enum(IMAGE_QUALITIES).optional(),
+  resolution: z.enum(IMAGE_RESOLUTIONS).optional(),
+  background: z.enum(IMAGE_BACKGROUNDS).optional(),
+  ratio: z.enum(IMAGE_RATIOS).optional(),
+  // 数量是唯一的数值档位：zod 的 enum 不收数字数组，档位清单仍是 editing.ts 的
+  // IMAGE_COUNTS（判据在 countOf），这里只是把同一份清单写成字面量并集。
+  count: z.union([z.literal(1), z.literal(2), z.literal(4)]).optional(),
+})
 
 /**
  * One canvas project (F1.4, F9.1).
@@ -87,6 +115,14 @@ const cardRecord = z.object({
    * 400」——那正是 v1.73 / v1.75 反复踩的那件事。
    */
   mediaModel: z.string().optional(),
+  /**
+   * 这张卡设下的生成参数（媒体编辑台）：编辑模式 / 蒙版 / 扩图尺寸 / 首尾帧 / 相机。
+   *
+   * 与 `mediaModel` 同一条可选纪律，且**归一在写入口**（`normalizeMediaParams`）：
+   * 全都没设就不写这个字段——「没设过」与「一包空参数」在记录里必须是同一种状态。
+   * `undefined` 读作「这张卡没有参数」，老记录一张都不用迁。
+   */
+  mediaParams: mediaParamsRecord.optional(),
   /**
    * 产物的真实宽高比（宽 ÷ 高，F3.11）。有它，媒体卡就按图的比例坐，而不是一律 16:9。
    *

@@ -174,6 +174,14 @@ export interface DesignEngine {
   deletePage(pageId: string): void
   /** 把当前图序列化回 `.design` 信封文本（写盘用）。 */
   serialize(): string
+  /**
+   * 把几份图片字节落成**图片图层**（v1.96）：每份字节存进图里的图片表（hash 认），建一个
+   * IMAGE 填充的矩形，围绕 `center`（世界坐标）一字排开，整批记一条 undo 并选中。
+   *
+   * 只收位图（png/jpeg/webp/gif/avif）；解不开尺寸的那份**跳过**（返回的 id 列表里没有它），
+   * 全部失败返回空数组——「一张都没落上」是答案，不是异常，调用方按长度说话。
+   */
+  addImageLayers(files: readonly File[], center: { x: number; y: number }): Promise<string[]>
   /** 图变了（undo/redo/命令提交）→ 该写盘了。注册返回解绑函数。 */
   onDirty(cb: () => void): () => void
 }

@@ -40,8 +40,12 @@ import type { CanvasBridge } from '../../wire/bridge.ts'
 import { nodeTypeOf } from '../../wire/model-memory.ts'
 import type { Translate } from '../../ui/locales.ts'
 import { ModelPicker } from '../../ui/model/model-picker.tsx'
+import { MediaParamsPicker } from '../../ui/media/media-params.tsx'
 import { PromptInput } from '../../ui/prompt/prompt-input.tsx'
 import type { PromptInputHandle } from '../../ui/prompt/prompt-input.tsx'
+import { RefPopup } from '../../ui/prompt/ref-popup-view.tsx'
+import { keptPick } from '../../ui/prompt/ref-popup.ts'
+import type { QueryAnchor } from '../../ui/prompt/ref-popup.ts'
 import { composerSizeOf, resizedComposerSize, type ComposerSize } from './composer-size.ts'
 import { referenceOptions } from '../asset/reference-options.ts'
 import type { ReferenceCandidate, ReferenceOption } from '../asset/reference-options.ts'
@@ -363,8 +367,17 @@ export function ComposerBody(props: ComposerBodyProps) {
   const [menu, setMenu] = useState(false)
   /** 输入框里光标前那半枚 `@查询`；`null` = 没在打引用。菜单开不开就看它。 */
   const [query, setQuery] = useState<string | null>(null)
+  /**
+   * 那一枚 `@` 在视口里的盒子——候选弹窗按它定位（用户提的：「位置根据 `@` 符号定位」）。
+   *
+   * 由输入面量好报上来：`@` 是值里的一个**偏移**，落成屏幕上的一个盒子只有 DOM 知道，
+   * 这里再算一遍就是第二个来源。量不到（极少数浏览器在空行上给出 0×0）就没有弹窗。
+   */
+  const [anchor, setAnchor] = useState<QueryAnchor | null>(null)
   /** 候选里高亮到第几枚（键盘上下键走）。 */
   const [picked, setPicked] = useState(0)
+  /** 上一次报上来的查询：只用来判断「这次是真的换了搜索词，还是同一次查询的重报」。 */
+  const lastQuery = useRef<string | null>(null)
   /** 输入框那只把手。调用方给了槽位就用它，没给（放大态）就自己揣一只。 */
   const own = useRef<PromptInputHandle | null>(null)
   const slot = inputRef ?? own
@@ -463,6 +476,7 @@ export function ComposerBody(props: ComposerBodyProps) {
     if (option === undefined) return
     slot.current?.insertMention(option.mention)
     setQuery(null)
+    setAnchor(null)
     setPicked(0)
   }
   const canSend = draft.trim() !== ''
@@ -544,39 +558,43 @@ export function ComposerBody(props: ComposerBodyProps) {
             {corner.glyph}
           </button>
         )}
-
-        {/* `@` 候选：在输入框里打一个 `@`，光标前那半枚查询就是过滤条件（内容随打字变，
-            所以菜单不用自己收——查询一散它就散了）。候选是**能引用的文件**：这张卡已经
-            引用的上游在前、画布别的卡片在后，与 ⊕ 菜单同一份数据。选中插进去的是一枚
-            **引用标签**，而它落到提示词里的仍只是那串 `@路径`——发出去的逐字不变。 */}
-        {query === null ? null : (
-          <div className="dsh-canvas-menu dsh-canvas-refmenu" role="listbox" aria-label={t('canvas.composer.reference')}>
-            {options.length === 0 ? (
-              <span className="dsh-canvas-composer-menuempty">{t('canvas.composer.noReference')}</span>
-            ) : (
-              options.map((option, index) => (
-                <button
-                  className="dsh-canvas-row"
-                  key={option.mention}
-                  role="option"
-                  aria-selected={index === at}
-                  data-at={index === at ? 'true' : undefined}
-                  title={option.fromMaterial ? t('canvas.composer.referenceMeta') : option.path}
-                  // 按住不夺焦点：这一下点的是候选，光标该留在框里（松开才是选）。
-                  onPointerDown={(event) => event.preventDefault()}
-                  onClick={() => choose(option)}
-                >
-                  {thumbs[option.path] === undefined ? null : (
-                    <img className="dsh-canvas-refthumb" src={thumbs[option.path]} alt="" />
-                  )}
-                  {option.label}
-                  <span className="dsh-canvas-row-meta">{t(REFERENCE_TYPE_LABEL[option.type])}</span>
-                </button>
-              ))
-            )}
-          </div>
-        )}
       </div>
+
+      {/* `@` 候选：只要光标前那半枚查询不带空白就浮出来（句子中间敲的 `@` 也算——用户
+          提的「任意位置 `@` 就激活引用弹窗列表」），候选是**能引用的文件**：这张卡已经
+          引用的上游在前、画布别的卡片在后，与 ⊕ 菜单同一份数据。选中插进去的是一枚
+          **引用标签**，而它落到提示词里的仍只是那串 `@路径`——发出去的逐字不变。
+          `anchor` 决定它贴在哪儿（落点算术在 `ui/prompt/ref-popup.ts`，浮层在 `RefPopup`
+          里 portal 到画布根：它不占这条带子的排版位，也**不在**材料行这张 flex 里）。 */}
+      <RefPopup
+        anchor={query === null ? null : anchor}
+        field={slot.current?.el ?? null}
+        label={t('canvas.composer.reference')}
+      >
+        {options.length === 0 ? (
+          <span className="dsh-canvas-composer-menuempty">{t('canvas.composer.noReference')}</span>
+        ) : (
+          options.map((option, index) => (
+            <button
+              className="dsh-canvas-row"
+              key={option.mention}
+              role="option"
+              aria-selected={index === at}
+              data-at={index === at ? 'true' : undefined}
+              title={option.fromMaterial ? t('canvas.composer.referenceMeta') : option.path}
+              // 按住不夺焦点：这一下点的是候选，光标该留在框里（松开才是选）。
+              onPointerDown={(event) => event.preventDefault()}
+              onClick={() => choose(option)}
+            >
+              {thumbs[option.path] === undefined ? null : (
+                <img className="dsh-canvas-refthumb" src={thumbs[option.path]} alt="" />
+              )}
+              {option.label}
+              <span className="dsh-canvas-row-meta">{t(REFERENCE_TYPE_LABEL[option.type])}</span>
+            </button>
+          ))
+        )}
+      </RefPopup>
 
       {/* 输入框是公共件 PromptInput：`@文件` 记号在这里画成一枚引用标签（图标 + 文件名 +
           可选行号），行内与放大弹窗共用这一个（见 ../ui/prompt-input.tsx）。 */}
@@ -591,9 +609,14 @@ export function ComposerBody(props: ComposerBodyProps) {
         value={draft}
         onChange={onDraftChange}
         refs={refs}
-        onQueryChange={(next) => {
+        onQueryChange={(next, at) => {
           setQuery(next)
-          setPicked(0)
+          setAnchor(at)
+          // 松键、聚焦、滚动、点选之后输入面都会重报一次（好把弹窗按回那一枚 `@`），
+          // **重报不等于换了搜索词**：每次都把高亮拨回第一枚，用户按一下 ↓ 就变成
+          // 「挪一格又弹回第一枚」。只有查询本身变了才复位。
+          setPicked((now) => keptPick(lastQuery.current, next, now))
+          lastQuery.current = next
         }}
         onKeyDown={(event) => {
           // 菜单开着时方向键与 Enter 归菜单；Esc 只收菜单（这一下不该顺手把弹窗关了），
@@ -615,7 +638,14 @@ export function ComposerBody(props: ComposerBodyProps) {
             if (event.key === 'Escape') {
               event.preventDefault()
               event.stopPropagation()
-              setQuery(null)
+              // 收起候选走输入面那只把手：它身上还记着那半枚查询的偏移（框里滚动时要拿它
+              // 把弹窗按回那一枚 `@` 上），只清这边的状态，下一次滚动弹窗又会自己冒出来。
+              if (slot.current === null) {
+                setQuery(null)
+                setAnchor(null)
+              } else {
+                slot.current.dismissQuery()
+              }
               return
             }
           }
@@ -636,6 +666,16 @@ export function ComposerBody(props: ComposerBodyProps) {
           sessionId={card.sessionId}
           kind={nodeType}
           mediaModel={card.mediaModel}
+          t={t}
+        />
+        {/* 编辑台：媒体卡的常设生成参数（编辑模式 / 蒙版 / 首尾帧 / 相机）。音频卡上它
+            自己返回 null——「没有可设的参数」由组件与判据说话，不在这里手写三种名字。 */}
+        <MediaParamsPicker
+          bridge={bridge}
+          projectId={card.project}
+          cardId={card.id}
+          kind={nodeType}
+          params={card.mediaParams}
           t={t}
         />
         <span className="dsh-canvas-spacer" />

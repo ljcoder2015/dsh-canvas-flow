@@ -74,6 +74,21 @@ describe('ark image request', () => {
     const body = arkImageBody({ model: 'm', prompt: 'p', referenceUrl: 'data:image/png;base64,AAAA' })
     expect(body['image']).toBe('data:image/png;base64,AAAA')
   })
+
+  it('carries an inpaint mask on its own field, never inside the image slot', () => {
+    // 蒙版是**第二张图**（一张内容、一张区域）：塞进 `image` 数组会让服务端把两张图都
+    // 当成参考素材。局部重绘（媒体编辑台）请求 = 原图 + 蒙版 + 只画蒙版区域的那句指令。
+    const body = arkImageBody({
+      model: 'm',
+      prompt: 'p，只重绘蒙版覆盖的区域',
+      referenceUrl: 'data:image/png;base64,AAAA',
+      maskUrl: 'data:image/png;base64,BBBB',
+    })
+    expect(body['image']).toBe('data:image/png;base64,AAAA')
+    expect(body['mask']).toBe('data:image/png;base64,BBBB')
+    // 没设蒙版就不写这个字段：与「给了才写」的其余字段同一条纪律。
+    expect(arkImageBody({ model: 'm', prompt: 'p' })).not.toHaveProperty('mask')
+  })
 })
 
 describe('ark image response', () => {
@@ -181,6 +196,42 @@ describe('ark video request', () => {
 
   it('keeps the requested ratio for text-to-video, where no frame decides it', () => {
     expect(arkVideoBody({ model: 'm', prompt: 'p', ratio: '16:9' })['ratio']).toBe('16:9')
+  })
+
+  it('sends first and last frame as two content parts with their own roles, and adapts the ratio', () => {
+    // 首尾帧（媒体编辑台）是**两张图**、两个槽位、两个 role——塞进一张里就是让服务端猜。
+    // 任一帧在场上时 ratio 归一 adaptive：这条对「首帧 + 尾帧」的组合同样成立，而且
+    // 它是最容易写错的一条（只判首帧角色的话，双帧请求会带着 16:9 出门换 400）。
+    const body = arkVideoBody({
+      model: 'm',
+      prompt: 'p',
+      referenceUrl: 'data:image/png;base64,AAAA',
+      lastFrameUrl: 'data:image/png;base64,BBBB',
+      ratio: '16:9',
+    })
+    expect(body['content']).toEqual([
+      { type: 'text', text: 'p' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' }, role: 'first_frame' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,BBBB' }, role: 'last_frame' },
+    ])
+    expect(body['ratio']).toBe('adaptive')
+  })
+
+  it('sends a lone last frame as a last_frame part — tail-frame image-to-video is legal on its own', () => {
+    const body = arkVideoBody({ model: 'm', prompt: 'p', lastFrameUrl: 'data:image/png;base64,BBBB', ratio: '9:16' })
+    expect(body['content']).toEqual([
+      { type: 'text', text: 'p' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,BBBB' }, role: 'last_frame' },
+    ])
+    expect(body['ratio']).toBe('adaptive')
+  })
+
+  it('turns a fixed camera into the one protocol field that exists, and nothing else', () => {
+    // 协议里相机只有 camera_fixed 一个布尔（Seedance 文档）；运镜档位在到达这里之前
+    // 已经被写成 prompt 里的导演指令——这里不该再见到它们。
+    expect(arkVideoBody({ model: 'm', prompt: 'p', camera: 'fixed' })['camera_fixed']).toBe(true)
+    const quiet = arkVideoBody({ model: 'm', prompt: 'p' })
+    expect(quiet).not.toHaveProperty('camera_fixed')
   })
 
   it('never asks for a watermark — the artifact belongs to the user', () => {

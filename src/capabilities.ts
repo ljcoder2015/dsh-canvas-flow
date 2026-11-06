@@ -71,6 +71,23 @@ export interface GenerateImageRequest {
    */
   referencePath?: string
   /**
+   * 这张卡设下的编辑模式（媒体编辑台：`inpaint` / `outpaint` / `matting`）。
+   *
+   * 它是卡片上的常设设定（`setMediaParams` 写的），不是这一次调用随口给的——所以由
+   * 调用方（`card-runtime`）从卡片记录里读出来带上，能力接口只负责把「用户设了什么」
+   * 原样交下去。协议里它没有整字段的承载位置：蒙版走 {@link GenerateImageRequest.maskPath}、
+   * 扩图尺寸走 {@link GenerateImageRequest.editSize}、指令写进 prompt。
+   */
+  editMode?: string
+  /** 局部重绘的蒙版：项目相对路径、`https://…` 或 `data:…`；与 {@link referencePath} 同一套地址规则。 */
+  maskPath?: string
+  /**
+   * 请求体的 `size`：旧卡遗留的扩图目标尺寸（`2048x2048`），或参数面板常设画幅
+   * （`imageSizeOf` 用清晰度 × 比例换算出的 `WxH`，或 `'2K'` 这样的裸档位）。
+   * 两个来源冲突时扩图尺寸赢——它是更具体的意图。
+   */
+  editSize?: string
+  /**
    * 这张卡选定的生成模型（`doubao-seedream-5-0-pro-260628` 这种 id）。
    *
    * 空 = 没选过，交给配置里第一个对得上模型族的模型（`pickMediaRoute`）。给了就必须
@@ -101,6 +118,21 @@ export interface GenerateVideoRequest {
   referencePath?: string
   /** 那张图在这一次生成里的角色：`first_frame`（默认）/ `last_frame` / `reference_image`。 */
   referenceRole?: string
+  /**
+   * 尾帧参考图（媒体编辑台）：项目相对路径、`https://…` 或 `data:…`。
+   *
+   * 与 {@link referencePath} 各占一个槽位——首尾帧是**两张图**、两个 `role`，而
+   * 「哪张当首帧」这件事已由 {@link referencePath} 自己的 role 说明白了。任一帧在场上
+   * 时，协议要求 `ratio` 归一 `adaptive`（`core/media/ark.ts` 的 `FRAME_ROLES`）。
+   */
+  lastFramePath?: string
+  /**
+   * 相机控制（媒体编辑台）：`fixed` = 固定机位，落进请求体的 `camera_fixed`。
+   *
+   * 运镜档位（推 / 拉 / 摇）没有协议字段，由调用方写成 prompt 里的导演指令
+   * （`core/media/editing.ts` 的 `cameraPromptOf`）——两种去向都只认「协议真有的」。
+   */
+  camera?: string
   /** 这张卡选定的生成模型；空 = 交给配置里第一个对得上模型族的模型。 */
   model?: string
 }

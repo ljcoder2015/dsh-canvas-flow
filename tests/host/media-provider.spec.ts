@@ -167,8 +167,7 @@ describe('一次音频生成实际发到哪儿、带什么', () => {
   })
 })
 
-describe('音频失败时说的话', () => {
-  it('carries the server message through when the code is non-zero, and writes nothing', async () => {
+describe('音频失败时说的话', () => {  it('carries the server message through when the code is non-zero, and writes nothing', async () => {
     stubFetch([{ code: 40001, message: 'unsupported audio format' }])
     const provider = new MediaProvider(face() as never, OPTIONS)
     await expect(
@@ -197,5 +196,78 @@ describe('音频失败时说的话', () => {
     await expect(
       provider.capabilities().generateAudio!({ project: { root } as never, file: 'voice.mp3', prompt: 'x' }),
     ).rejects.toThrow(/没有能找到音频模型的路线/)
+  })
+})
+
+describe('媒体编辑台参数真的进了请求体（假 fetch 真发一次）', () => {
+  it('生图：原图走 image、蒙版走 mask、扩图尺寸走 size——三处各是各的字段', async () => {
+    const calls = stubFetch([{ data: [{ b64_json: 'AAAA' }] }])
+    const provider = new MediaProvider(face() as never, OPTIONS)
+    await provider.capabilities().generateImage!(
+      {
+        project: { root } as never,
+        file: 'out.png',
+        prompt: 'p，只重绘蒙版覆盖的区域',
+        referencePath: 'data:image/png;base64,AAAA',
+        maskPath: 'data:image/png;base64,BBBB',
+        editSize: '2048x2048',
+      },
+      undefined,
+    )
+    expect(calls[0]?.url).toBe('https://ark.cn-beijing.volces.com/api/v3/images/generations')
+    const body = calls[0]?.body as Record<string, unknown>
+    expect(body['image']).toBe('data:image/png;base64,AAAA')
+    expect(body['mask']).toBe('data:image/png;base64,BBBB')
+    expect(body['size']).toBe('2048x2048')
+  })
+
+  it('生视频：首尾帧两条 content、任一帧在场 ratio 归一 adaptive、固定机位走 camera_fixed', async () => {
+    const calls = stubFetch([
+      { id: 'cgt-task-1' },
+      { status: 'succeeded', content: { video_url: { url: 'https://cdn.test/a.mp4' } } },
+    ])
+    const provider = new MediaProvider(face() as never, OPTIONS)
+    await provider.capabilities().generateVideo!(
+      {
+        project: { root } as never,
+        file: 'clip.mp4',
+        prompt: 'p',
+        ratio: '16:9',
+        referencePath: 'data:image/png;base64,AAAA',
+        lastFramePath: 'data:image/png;base64,BBBB',
+        camera: 'fixed',
+      },
+      undefined,
+    )
+    expect(calls[0]?.url).toBe('https://ark.cn-beijing.volces.com/api/v3/contents/generations/tasks')
+    const body = calls[0]?.body as Record<string, unknown>
+    expect(body['content']).toEqual([
+      { type: 'text', text: 'p' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' }, role: 'first_frame' },
+      { type: 'image_url', image_url: { url: 'data:image/png;base64,BBBB' }, role: 'last_frame' },
+    ])
+    // 请求里明说 16:9 也必须归一：首帧已经决定了比例，另一给就 400（TaskTypeConstraint）。
+    expect(body['ratio']).toBe('adaptive')
+    expect(body['camera_fixed']).toBe(true)
+  })
+})
+
+describe('图片路线可用性（v1.92 图文）', () => {
+  it('配置里有 seedream 路线就是 ready，没有就不是', () => {
+    expect(new MediaProvider(face() as never, OPTIONS).imageRouteReady()).toBe(true)
+    const empty = face({ providers: { gw: { models: [{ id: 'deepseek-v4-flash' }] } } })
+    expect(new MediaProvider(empty as never, OPTIONS).imageRouteReady()).toBe(false)
+  })
+
+  it('没有设置服务（裸部署）也不是 ready，且不抛', () => {
+    const bare = { get: () => undefined }
+    expect(new MediaProvider(bare as never, OPTIONS).imageRouteReady()).toBe(false)
+  })
+
+  it('同步给出答案：不碰 fetch、不碰凭证', () => {
+    // 这条答案只该读设置面的内存描述——它要进的是提示词，不是生成请求。
+    const calls = stubFetch([])
+    expect(new MediaProvider(face() as never, OPTIONS).imageRouteReady()).toBe(true)
+    expect(calls).toHaveLength(0)
   })
 })

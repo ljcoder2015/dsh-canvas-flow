@@ -24,6 +24,7 @@ import type {
   ExportResult,
   FolderEntry,
   LastPrompt,
+  MediaParams,
   Note,
   PendingIntent,
   Point,
@@ -38,6 +39,7 @@ import type {
 } from '../../types.ts'
 import type { CanvasFace, CardFace } from './remote.ts'
 import type { ModelSelectionView } from './model-memory.ts'
+import type { DesignImageResultWire } from '../../contract.ts'
 
 /** How long a session-list read is reused for the model projection lookup. */
 const SESSION_LIST_TTL_MS = 2_000
@@ -344,6 +346,16 @@ export class CanvasBridge {
   }
 
   /**
+   * 记下这张卡设下的生成参数（媒体编辑台）；空对象清除全部参数。
+   *
+   * 面板的落点：参数是卡片记录上的常设设定，随后**每一次生成**都会被读出来拼进请求
+   * （`card-runtime` 的两条生成方法）——不设就不出现，与 `mediaModel` 同一条纪律。
+   */
+  setMediaParams(projectId: string, cardId: string, params: MediaParams): Promise<BoardCard> {
+    return unwrap(this.card.setMediaParams(projectId, cardId, params, this.signal))
+  }
+
+  /**
    * 记下产物真实的宽高比（F3.11）。
    *
    * 调用方是卡面自己：媒体产物一加载完，浏览器就把它的宽高解出来了（`naturalWidth`
@@ -375,6 +387,14 @@ export class CanvasBridge {
   /** The bounded digest of one artifact. */
   readSummary(projectId: string, cardId: string): Promise<CardSummary> {
     return unwrap(this.card.readSummary(projectId, cardId, this.signal))
+  }
+
+  /**
+   * 给一张卡生成一张图片（v1.96 图片图层）：宿主生成、落盘到项目里，字节随结果带回。
+   * 失败不是异常：`ok: false` + `reason`，调用方按理由说话。
+   */
+  generateImage(projectId: string, cardId: string, prompt: string): Promise<DesignImageResultWire> {
+    return unwrap(this.card.generateImage(projectId, cardId, prompt, this.signal))
   }
 
   /** The fullscreen view payload of one artifact (F3.8). */

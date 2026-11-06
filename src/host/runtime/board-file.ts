@@ -127,6 +127,8 @@ export class BoardFile {
           // 生成模型跟着作品走（F2.7）：它是这张作品怎么做出来的决定，不是本机环境。
           // `undefined` 就是「没选过」，编码时那一段会被整个省掉。
           mediaModel: record.mediaModel,
+          // 编辑台的参数同样跟着作品走：蒙版、首尾帧、运镜是「这张片怎么做的」的决定。
+          mediaParams: record.mediaParams,
           // 宽高比同样跟着作品走（F3.11）：卡片多大是这张作品的样子，不是本机的观察结果。
           aspect: record.aspect,
         }

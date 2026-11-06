@@ -9,6 +9,7 @@
  *
  * 所以规则只写一次，四个地方都写 `...mediaSlotOf(record)`。
  */
+import type { MediaParams } from '../../media/editing.ts'
 
 /**
  * 卡片选定的生成模型，摊成可展开的片段。
@@ -35,4 +36,19 @@ export function mediaSlotOf(record: { readonly mediaModel?: string | undefined }
  */
 export function aspectSlotOf(record: { readonly aspect?: number | undefined }): { aspect?: number } {
   return record.aspect === undefined ? {} : { aspect: record.aspect }
+}
+
+/**
+ * 这张卡设下的生成参数（媒体编辑台），摊成可展开的片段。
+ *
+ * 与 {@link mediaSlotOf} 同一条纪律，但**不能合成一个**：「没选过模型」与「没设过参数」
+ * 是两次独立的写入，落在记录上也是两个独立的字段——合起来等于给「改参数必须重选模型」
+ * 这类幽灵行为留门。
+ *
+ * 归一**不在这里做**：写进来的那一笔已经在 `setMediaParams` 里经过
+ * `normalizeMediaParams`（全空即删除），所以这里读到 `undefined` 就只有一种意思——
+ * 这张卡没有参数。
+ */
+export function paramsSlotOf(record: { readonly mediaParams?: MediaParams | undefined }): { mediaParams?: MediaParams } {
+  return record.mediaParams === undefined ? {} : { mediaParams: record.mediaParams }
 }

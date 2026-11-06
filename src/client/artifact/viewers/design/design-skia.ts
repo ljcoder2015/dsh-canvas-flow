@@ -12,6 +12,11 @@
  * 所以中文只能靠仓库 vendored 的 Noto Sans SC 兜住——它 17.7MB，按「首帧必需
  * 的字面」与「后台到货的回落字面」两档分开加载，见 preloadCoreFonts/preloadCJKFont。
  *
+ * 除这两支自带字面之外，**这台机器装了的字体也能用**（v1.89）：core 在找不到字面时会问
+ * `fontManager.setHostFontLoader` 那个口子，`design-host-fonts.ts` 把它接到宿主的
+ * `/dsh-canvas/fonts` 路由上（宿主读盘、`.ttc` 拆出一张脸、只按族名查表）。稿子里写
+ * 「PingFang SC」的那段文字因此画的是苹方，而不是退回 Inter 之后整段空白。
+ *
  * 本文件与加载器（`design-canvaskit.ts`）一样「optional by construction」：
  * 不 throw，失败即降级。
  */
@@ -22,6 +27,8 @@ import type { SceneGraph } from '@open-pencil/scene-graph'
 import { CJK_TEXT_FAMILY } from '../../../../core/artifact/design/export-font.ts'
 import { LATIN_TEXT_FAMILY } from '../../../../core/artifact/design/node-props.ts'
 import { assetUrl, loadCanvasKit } from './design-canvaskit.ts'
+import { installHostFonts } from './design-host-fonts.ts'
+import { createFontProgressTracker, type DesignFontProgress, type FontProgressTracker } from './design-font-progress.ts'
 import { type CanvasKitRuntime, type DesignBackend } from './design-engine-types.ts'
 
 /** The page backdrop behind the containers — matches `.dsh-canvas-design` CSS. */
@@ -51,6 +58,118 @@ const CJK_FONT_FILE = 'NotoSansSC-Regular.ttf'
 
 let coreFontsPreloaded: Promise<void> | undefined
 let cjkFontPreloaded: Promise<ArrayBuffer | null> | undefined
+/** 中文那一趟有没有跑完（成功或失败）。进度清单要靠它区分「在途」与「已收尾」。 */
+let cjkFontSettled = false
+
+// ── 字体加载进度（v1.88） ──────────────────────────────────────────────────
+//
+// 进度只有**一份**，因为字体加载本身只有一份：`preloadCoreFonts` / `preloadCJKFont` 是
+// 页面级单飞，四个设计卡同时开也只会取一遍。所以这里也是一枚模块级的 tracker + 一张订阅表，
+// 而不是「每台引擎各带一份」——每台一份的话，第二台拿到的永远是「已缓存、无进度」。
+//
+// 为什么展示它：中文字面 17.7MB 是**首帧之后**才到货的（见 `preloadCJKFont` 的注释），
+// 到货前含中文的文字整段空白。没有进度，用户看到的是「打开就坏了」。
+
+const fontListeners = new Set<(progress: DesignFontProgress | null) => void>()
+let fontTracker: FontProgressTracker | null = null
+
+function publishFontProgress(progress: DesignFontProgress | null): void {
+  for (const listener of fontListeners) listener(progress)
+}
+
+/**
+ * 订阅字体加载进度（预览器用）。
+ *
+ * `null` 的意义是「现在没有字面在路上」——已缓存、或这一轮不取字体。订阅时**立刻**交一份
+ * 现状：订阅者挂上来时第一块字节可能已经到过了（chunk 加载与 React 挂载不是一个节拍），
+ * 只等下一次回调会让进度条晚一格才出现。
+ */
+export function subscribeDesignFonts(listener: (progress: DesignFontProgress | null) => void): () => void {
+  fontListeners.add(listener)
+  listener(fontTracker?.snapshot() ?? null)
+  return () => {
+    fontListeners.delete(listener)
+  }
+}
+
+/**
+ * 这一轮**真要发请求**的那几支。
+ *
+ * 已缓存的不进清单：分母里躺着永远不动的一格，进度条会先跳到 80% 再干等（中文那 17.7MB
+ * 正是这么骗人的）。判断依据就是加载器自己的账——`coreFontsPreloaded` 有没有、字体管理器里
+ * 有没有那一支的字节。
+ */
+function pendingFontFiles(): string[] {
+  const files: string[] = []
+  if (coreFontsPreloaded === undefined) for (const [, , file] of CORE_FONTS) files.push(file)
+  // 中文：内存里没有、而且**没有一趟在跑**，才会真发请求。在途的那一趟仍要算进来
+  // （第二张卡同时打开时，进度条接着上一轮的走），已跑完却没取到的则不算。
+  const cjkMissing = fontManager.loadedData(CJK_TEXT_FAMILY, 'Regular') === null
+  if (cjkMissing && !cjkFontSettled) files.push(CJK_FONT_FILE)
+  return files
+}
+
+/**
+ * 建引擎前把进度表摆好。**必须早于 `preloadCoreFonts()`**：那一跑起来，`pendingFontFiles`
+ * 就再也算不出「这一轮要取什么」了。
+ *
+ * 三条规矩：
+ * - 这一轮没有要取的（全在内存里）→ 置 `null` 并通知，界面把上一轮残留的那条进度收掉。
+ * - 上一轮还在路上（`done < total`）→ **沿用**，别重建：重建会把已经读过的字节与响应头
+ *   一起丢掉，进度条会退回起点再追一遍。
+ * - 其余（首次，或上一轮已收尾）→ 按这一轮的清单新建。
+ */
+function watchFontProgress(): void {
+  const pending = pendingFontFiles()
+  if (pending.length === 0) {
+    if (fontTracker !== null) {
+      fontTracker = null
+      publishFontProgress(null)
+    }
+    return
+  }
+  const current = fontTracker?.snapshot()
+  if (current !== undefined && current.done < current.total) return
+  fontTracker = createFontProgressTracker(pending, (progress) => publishFontProgress(progress))
+  publishFontProgress(fontTracker.snapshot())
+}
+
+/**
+ * 把一份字面读进内存，**顺路报字节**。
+ *
+ * 走流而不是 `response.arrayBuffer()`：后者要等整支到齐才返回，17.7MB 在慢网下是一段纯黑箱
+ * ——这正是「字体进度」想照亮的地方。拼字节的方式是先收块、最后一次性铺进一段连续内存
+ * （逐块 `concat` 是 O(n²)，17MB 下会明显卡主线程）。
+ */
+async function readFontBody(response: Response, file: string): Promise<ArrayBuffer> {
+  const body = response.body
+  if (body === null) {
+    // 老宿主/被拦过的响应可能没有流；退回去等整份，进度就只报一次「到了」。
+    const buffer = await response.arrayBuffer()
+    fontTracker?.read(file, buffer.byteLength)
+    fontTracker?.finish(file)
+    return buffer
+  }
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (value === undefined || value.byteLength === 0) continue
+    chunks.push(value)
+    total += value.byteLength
+    fontTracker?.read(file, value.byteLength)
+  }
+  const merged = new Uint8Array(total)
+  let offset = 0
+  for (const chunk of chunks) {
+    merged.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  fontTracker?.finish(file)
+  return merged.buffer as ArrayBuffer
+}
 
 /**
  * Inject the bundled faces from the plugin's asset route into core's font
@@ -63,14 +182,20 @@ async function loadFontFile(family: string, style: string, file: string): Promis
     const response = await fetch(assetUrl(file))
     if (!response.ok) {
       console.warn(`[dsh-canvas] 字体资产缺失：${file}（HTTP ${response.status}），文字可能不显示。`)
+      // 失败也算「这一支结束了」：进度条不该为一条永远不来的请求停在半路。
+      fontTracker?.finish(file)
       return null
     }
-    const data = await response.arrayBuffer()
+    // 响应头一到就有总长（宿主路由不压缩，`content-length` 就是字节数）——分母从这一刻起是
+    // 真的，百分比才敢往字节上算。
+    fontTracker?.measure(file, Number(response.headers.get('content-length') ?? 0))
+    const data = await readFontBody(response, file)
     fontManager.markLoaded(family, style, data)
     return data
   } catch (error) {
     // Offline or route missing — the font resolver's remote path is next.
     console.warn(`[dsh-canvas] 字体加载失败：${file}`, error)
+    fontTracker?.finish(file)
     return null
   }
 }
@@ -95,7 +220,13 @@ function preloadCoreFonts(): Promise<void> {
  * 不等它，到货后补画一次即可。
  */
 function preloadCJKFont(): Promise<ArrayBuffer | null> {
-  cjkFontPreloaded ??= loadFontFile(CJK_TEXT_FAMILY, 'Regular', CJK_FONT_FILE)
+  if (cjkFontPreloaded !== undefined) return cjkFontPreloaded
+  cjkFontPreloaded = loadFontFile(CJK_TEXT_FAMILY, 'Regular', CJK_FONT_FILE).finally(() => {
+    // 只有「这一趟跑完了」才知道它不会再来（成功与否都记上）。进度表要的正是这一位：
+    // 在途的那一趟算进本轮清单，已收尾却没落到内存里的（失败）不算——否则进度条会为一条
+    // 永远不会再发的请求停在半路。
+    cjkFontSettled = true
+  })
   return cjkFontPreloaded
 }
 
@@ -130,6 +261,21 @@ function declareCJKFallback(data: ArrayBuffer): boolean {
 }
 
 /**
+ * 本机字体那条通路装一次（v1.89）。
+ *
+ * 装在**引擎创建**这一侧而不是模块加载时：`fontManager` 是页面级单例，但这条加载器只在
+ * 真的要画字时才被问；早装没有任何成本，晚装会让第一帧去等一次没必要的 404。
+ * 预览与导出都走这里——两边少装一次，导出的字就换了（不报错的那一类）。
+ */
+let hostFontsInstalled = false
+
+function ensureHostFonts(): void {
+  if (hostFontsInstalled) return
+  hostFontsInstalled = true
+  installHostFonts((loader) => fontManager.setHostFontLoader(loader))
+}
+
+/**
  * Build the Skia backend for one canvas element. Resolves `null` when the
  * engine cannot take the element (no WebGL2 *and* no CPU surface) — the
  * viewer keeps its 2D picture in that case.
@@ -143,6 +289,10 @@ export async function createSkiaBackend(
   graph: SceneGraph,
   onRepaint: () => void,
 ): Promise<DesignBackend | null> {
+  // 本机字体先接上：稿子里写的是作者机器上的族名，能不能画出字全看这条通路。
+  ensureHostFonts()
+  // 进度表要早于任何一次取字体（见 watchFontProgress）。
+  watchFontProgress()
   await preloadCoreFonts()
   const ck = runtime as unknown as CanvasKit
   const webgl = runtime.MakeWebGLCanvasSurface?.(canvas) ?? null
@@ -270,6 +420,8 @@ export interface ExportRenderer {
 }
 
 export async function createExportRenderer(): Promise<ExportRenderer | null> {
+  // 导出与预览用同一批字面（含本机字体），否则「预览对、导出的字换了」不会报错。
+  ensureHostFonts()
   const runtime = await loadCanvasKit()
   if (runtime === null) return null
   await preloadCoreFonts()

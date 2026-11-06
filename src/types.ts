@@ -6,6 +6,11 @@
  * `domain.ts` (durable records); this module only names the shapes.
  */
 
+import type { MediaParams as MediaParamsShape } from './core/media/editing.ts'
+
+/** 一张媒体卡上设下的生成参数（媒体编辑台）；真源在 `core/media/editing.ts`。 */
+export type MediaParams = MediaParamsShape
+
 /** Branded project identifier. */
 export type ProjectId = string
 /**
@@ -80,6 +85,8 @@ export interface Card {
   name?: string
   /** 这张卡由哪个模型生成（F2.7）；空 = 交给配置里第一个对得上族的模型。 */
   mediaModel?: string
+  /** 这张卡设下的生成参数（媒体编辑台）；空 = 没设过，生成请求不带任何额外参数。 */
+  mediaParams?: MediaParams
   /** 产物的真实宽高比（宽 ÷ 高，F3.11）；空 = 还不知道，媒体卡按默认 16:9 坐。 */
   aspect?: number
   /** Epoch millis of the last observed write, used for staleness hints. */
@@ -156,6 +163,8 @@ export interface BoardCard {
    * 生成模型，会话也跟着换，下一次请求 400」那件事。
    */
   mediaModel?: string
+  /** 这张卡设下的生成参数（媒体编辑台）。空 = 没设过；只有媒体卡会用到它。 */
+  mediaParams?: MediaParams
   /**
    * 产物的真实宽高比（宽 ÷ 高，F3.11）。有它，这张卡就按产物的比例坐——一张 1:1 的图
    * 不该塞进 16:9 的框里左右留白，一段 9:16 的竖视频也不该被压成横的。

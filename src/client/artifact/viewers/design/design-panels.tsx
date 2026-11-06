@@ -42,7 +42,6 @@ import {
   POINT_COUNT_MIN,
   TEXT_ALIGNMENTS,
   TEXT_AUTO_RESIZE,
-  TEXT_FAMILIES,
   type TextAlignId,
   type TextAutoResizeId,
   arcAngles,
@@ -51,9 +50,16 @@ import {
   shapeTraitsOf,
   settleWeight,
   weightLabel,
-  weightsOf,
 } from '../../../../core/artifact/design/node-props.ts'
 import { canRemovePage, pageLabel } from '../../../../core/artifact/design/pages.ts'
+import {
+  buildFontFamilyOptions,
+  loadLocalFontFamilies,
+  localFontFamiliesSnapshot,
+  subscribeLocalFontFamilies,
+  weightsForFamily,
+  type LocalFontFamily,
+} from './design-local-fonts.ts'
 import {
   emptyCollapse,
   expandNodes,
@@ -291,6 +297,22 @@ function LineIcon(): ReactElement {
   )
 }
 
+/**
+ * 图片：圆角框 + 山与太阳（Figma 那副长相）。
+ *
+ * 图片图层本体是带 IMAGE 填充的矩形，徽标跟填充走——矩形框里塞着一张图，看一眼就知道
+ * 这一层不是空矩形。
+ */
+function ImageLayerIcon(): ReactElement {
+  return (
+    <Glyph>
+      <rect x="4.5" y="4.5" width="15" height="15" rx="3" />
+      <circle cx="9.5" cy="9.5" r="1.6" />
+      <path d="M19 15.5 15.2 11.7a1.6 1.6 0 0 0-2.3 0L7 17.5" />
+    </Glyph>
+  )
+}
+
 /** 星形：十点闭合星。 */
 function StarIcon(): ReactElement {
   return (
@@ -394,6 +416,7 @@ function TypeGlyph({ type }: { type: string }): ReactElement {
   if (type === 'section') return <SectionIcon />
   if (type === 'text') return <TextIcon />
   if (type === 'rectangle' || type === 'rounded-rectangle') return <RectIcon rounded={type === 'rounded-rectangle'} />
+  if (type === 'image') return <ImageLayerIcon />
   if (type === 'ellipse') return <EllipseIcon />
   if (type === 'line') return <LineIcon />
   if (type === 'star') return <StarIcon />
@@ -412,6 +435,7 @@ const TYPE_LABELS: Record<string, string> = {
   text: '文本',
   rectangle: '矩形',
   'rounded-rectangle': '圆角矩形',
+  image: '图片',
   ellipse: '椭圆',
   line: '直线',
   star: '星形',
@@ -869,6 +893,8 @@ function PropertiesPanel({
 }
 
 function DesignPropertiesTab({ snapshot, engine, onAction, revision }: DesignPanelsProps): ReactElement {
+  // 本机字体清单（钩子必须在任何提前 return 之前——下面两个分支也算「提前」）。
+  const localFamilies = useLocalFontFamilies()
   const count = snapshot.selection.length
   if (count === 0) {
     return <p className="dsh-canvas-design-panel-empty">选中一个图层查看属性。</p>
@@ -919,8 +945,11 @@ function DesignPropertiesTab({ snapshot, engine, onAction, revision }: DesignPan
    *
    * 旧文档里可能落着一个我们没有字面的字重（如 300）：把这一格丢掉的话，控件显示空的，
    * 用户看不见真值、一碰就悄悄改成别的；列出来至少是诚实的——选一个真有的档就是修好它。
+   *
+   * 「真有的档」对本机字体（v1.89）来说由宿主报的那份清单决定：苹方有 Regular/Medium/
+   * Semibold…，而 `TEXT_FAMILIES` 里没有它——只查内置那张表的话，换成苹方就只能选 Regular。
    */
-  const weights = weightsOf(read.fontFamily)
+  const weights = weightsForFamily(read.fontFamily, localFamilies)
   const weightOptions = weights.includes(read.fontWeight)
     ? weights
     : [...weights, read.fontWeight].sort((a, b) => a - b)
@@ -1139,16 +1168,20 @@ function DesignPropertiesTab({ snapshot, engine, onAction, revision }: DesignPan
             </label>
           </Module>
 
-          {/* 排版（F2.6）：字体下拉里只会出现**真注册过的字面**（`TEXT_FAMILIES`），
-              列一支没装上的一眼看上去没差别——画布上文字是空白的，什么也不报。 */}
+          {/* 排版（F2.6）：字体下拉里列的是**画得出来的**族——内置那两支（一定画得出来）
+              加上这台机器真装了的（v1.89，清单来自宿主）。列一支没装上的一眼看上去没差别
+              ——画布上文字是空白的，什么也不报。当前值不在清单里时单独标「本机未安装」。 */}
           <Module title="排版">
             <SelectField
               value={read.fontFamily}
-              options={TEXT_FAMILIES.map((family) => ({ value: family.id, label: family.label }))}
+              options={buildFontFamilyOptions(read.fontFamily, localFamilies)}
               onChange={(fontFamily) =>
-                // 换字体**连带把字重落回这支字面真有的档**（中文只有 Regular）：
+                // 换字体**连带把字重落回这支字面真有的档**（苹方没有 Thin 就落到最近的）：
                 // 两格一起写，一次编辑一笔 undo，不留中间态。
-                commit({ fontFamily, fontWeight: settleWeight(fontFamily, read.fontWeight) })
+                commit({
+                  fontFamily,
+                  fontWeight: settleWeight(fontFamily, read.fontWeight, weightsForFamily(fontFamily, localFamilies)),
+                })
               }
             />
             {weightOptions.length > 1 ? (
@@ -1255,9 +1288,36 @@ function SelectField({
   )
 }
 
+/**
+ * 本机字体清单（v1.89）。
+ *
+ * 面板每次图变都按版本重挂，而这份清单是**会话级**的（用户在系统里装了新字体要重开页面
+ * 才反映）——所以缓存住在模块里，重挂只在还没问过时真的发一次请求。
+ *
+ * 初始值取自模块缓存：先问到的那个面板已经把清单放下了，后来的面板首帧就带着完整选项，
+ * 不会先画一个只有 Inter 的下拉、下一帧再补齐（用户手快会在那一帧里点下去）。
+ */
+function useLocalFontFamilies(): LocalFontFamily[] {
+  const [families, setFamilies] = useState<LocalFontFamily[]>(() => localFontFamiliesSnapshot() ?? [])
+  useEffect(() => {
+    let alive = true
+    const stop = subscribeLocalFontFamilies((next) => {
+      if (alive) setFamilies(next)
+    })
+    void loadLocalFontFamilies().then((next) => {
+      // 问了但没问到（宿主没起来）：保留已有那份，别把下拉框清空。
+      if (alive && next.length > 0) setFamilies(next)
+    })
+    return () => {
+      alive = false
+      stop()
+    }
+  }, [])
+  return families
+}
+
 /** 勾选行：标题 + 开关。 */
-function CheckField({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }): ReactElement {
-  return (
+function CheckField({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }): ReactElement {  return (
     <label className="dsh-canvas-design-check">
       <span>{label}</span>
       <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />

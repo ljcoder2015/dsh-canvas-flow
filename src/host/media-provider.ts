@@ -135,6 +135,17 @@ export class MediaProvider {
     }
   }
 
+  /**
+   * 这个部署**现在**有没有一条能生成图片的路线（v1.92 图文并茂）。
+   *
+   * 同步，且只读设置面的内存描述：不发请求、不解凭证。「路线在不在」是文本卡提示词
+   * 要的答案——有就教模型怎么插图，没有就明令它别引用不存在的图片；「key 能不能解出
+   * 来」是生成那一刻的事，届时失败带着服务端的原话回来，模型照实转告即可。
+   */
+  imageRouteReady(): boolean {
+    return pickMediaRoute(this.routesSync(), 'image', this.overrideFor('image')) !== undefined
+  }
+
   private async generateImage(request: GenerateImageRequest, signal?: AbortSignal): Promise<{ path: string }> {
     const route = await this.routeFor('image', request.model)
     const key = await this.keyFor(route)
@@ -143,6 +154,10 @@ export class MediaProvider {
       prompt: request.prompt,
       format: imageFormatOf(request.file),
       referenceUrl: await this.referenceUrl(request.referencePath, request.project.root, signal),
+      maskUrl: await this.referenceUrl(request.maskPath, request.project.root, signal),
+      // 扩图的目标尺寸落进 `size`：编辑台上的「扩到多大」就是这个字段，别处没有第二个
+      // 承载位。没有设置就是 undefined，arkImageBody 那一侧照旧「给了才写」。
+      size: request.editSize,
     })
     const json = await this.postJson(`${route.baseURL}/images/generations`, body, key, signal)
     const result = readImageResult(json)
@@ -164,7 +179,11 @@ export class MediaProvider {
       duration: request.duration,
       resolution: request.resolution,
       referenceUrl: await this.referenceUrl(request.referencePath, request.project.root, signal),
+      // 尾帧是第二张图、第二个地址：两张图要各自过一遍「读字节拼 data URL」，
+      // 上限检查（30MB）对每一张单独成立。
+      lastFrameUrl: await this.referenceUrl(request.lastFramePath, request.project.root, signal),
       referenceRole: request.referenceRole,
+      camera: request.camera,
     })
     const created = await this.postJson(`${route.baseURL}/contents/generations/tasks`, body, key, signal)
     const taskId = readTaskId(created)
@@ -274,6 +293,18 @@ export class MediaProvider {
    * 的还是「它长得像不像一份 provider 配置」。
    */
   private async providerRoutes() {
+    return this.routesSync()
+  }
+
+  /**
+   * 读这个部署的 provider 路线（同步核心）。
+   *
+   * 在**每一条**设置段里找那个带 `providers` 字典的，优先 `llm-pi-ai` 那条：设置段的 `ns`
+   * 是 profile 的条目 id，而条目 id 与包名之间没有解析关系（本项目自己就踩过这个——
+   * `dsh-canvas` 这个短词与包名无关），所以按名字找是**首选**而不是唯一依据，真正认下来
+   * 的还是「它长得像不像一份 provider 配置」。
+   */
+  private routesSync() {
     const face = this.settings()
     if (face === undefined) return []
     let descriptors: readonly SettingsDescriptorShape[]

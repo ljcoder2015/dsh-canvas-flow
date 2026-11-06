@@ -17,6 +17,7 @@
  * （一个要报错面板，一个要一句提示）。加载这件事让这里管，怎么处理各自决定。
  */
 import { assetUrl, withParam } from './design-canvaskit.ts'
+import type { DesignFontProgress } from './design-font-progress.ts'
 import type {
   CreateDesignEngineArgs,
   DesignExportOutcome,
@@ -31,6 +32,14 @@ const ENGINE_CHUNK = 'design-engine.js'
 export interface DesignEngineModule {
   createDesignEngine(args: CreateDesignEngineArgs): Promise<EngineOutcome>
   designExport(request: DesignExportRequest): Promise<DesignExportOutcome>
+  /**
+   * 字体加载进度订阅（v1.88）。**可选，也不进 `designEngineOf` 的形状判定**。
+   *
+   * 判据是「少了它，这版客户端还能不能干活」：引擎与导出缺一个都干不了活，所以那两个必须在；
+   * 而这一项只决定盖板上多不多一行「字体 3/5」。把它写进必需项，等于让「资产里躺着一份
+   * 稍旧的 chunk」变成「整张预览报引擎加载失败」——拿一件装饰性的事去否决主体，不值得。
+   */
+  subscribeDesignFonts?: (listener: (progress: DesignFontProgress | null) => void) => () => void
 }
 
 /** 按 URL 取一份模块。抽成接缝是为了能在 node 里判「形状不对会怎样」。 */
@@ -84,10 +93,21 @@ async function attempt(importer: ModuleImporter, url: string): Promise<unknown> 
   }
 }
 
-/** Single-flight module load by URL; `null` when the chunk cannot be fetched. */
+/**
+ * Single-flight module load by URL; `null` when the chunk cannot be fetched.
+ *
+ * 失败**不留档**（与 `loadCanvasKit` 同一条规矩）：`null` 是「这一趟没取到」，不是
+ * 「这份资产不存在」。把它钉在缓存里会让一次抖动变成这张页面上的永久降级——而重试一次
+ * 的代价只是再问一句（形状不对那一趟已经在 `loadDesignEngineFrom` 里换过 URL 了）。
+ */
 let engineModule: Promise<DesignEngineModule | null> | undefined
 
 export function loadDesignEngine(): Promise<DesignEngineModule | null> {
-  engineModule ??= loadDesignEngineFrom()
-  return engineModule
+  if (engineModule !== undefined) return engineModule
+  const attempt = loadDesignEngineFrom()
+  engineModule = attempt
+  void attempt.then((module) => {
+    if (module === null && engineModule === attempt) engineModule = undefined
+  })
+  return attempt
 }

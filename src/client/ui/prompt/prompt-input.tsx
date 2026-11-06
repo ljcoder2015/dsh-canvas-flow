@@ -27,6 +27,15 @@
  * 引用**，不是它的一个字符）、标签内部不可编辑（非可编辑节点里没有光标）、复制/剪切按
  * 原文（标签还原成 `@路径`）、粘贴只取纯文本（富文本粘贴进来会带一堆 DOM，那正是这条
  * 边界最容易被撕开的地方）。
+ *
+ * ## 第五件事：`@` 在句子的任何位置都算
+ *
+ * 从前只有**词首**那个 `@` 会弹候选（那是宿主记号语法的边界，被顺手抄到了「要不要弹」
+ * 上），于是想引用一张卡得先把光标挪到词首、敲个空格。现在光标前那半枚查询只要不带空白
+ * 就弹（判据在 `ref-popup.ts` 的 `queryAt`），弹窗的位置也**贴着那一枚 `@`**——DOM 量
+ * 出来的视口盒子（`prompt-dom.ts` 的 `charRect`），不再挂在材料行下方。插进提示词的
+ * 那串字符仍必须落在词首：句子中间敲的 `@` 前面补一个空格（`mentionInsertion`），否则
+ * 它只是一个奇怪的长单词——标签画不出来、宿主也不认。
  */
 import { useCallback, useImperativeHandle, useLayoutEffect, useMemo, useRef } from 'react'
 import type {
@@ -38,7 +47,9 @@ import type {
 } from 'react'
 import { promptAtoms } from '../../../core/artifact/prompt/prompt-blocks.ts'
 import type { PromptFold, ReferenceFacts } from '../../../core/artifact/prompt/prompt-blocks.ts'
-import { caretFlat, selection, serializeHost, setCaret, writeAtoms } from './prompt-dom.ts'
+import { caretFlat, charRect, chipSpans, selection, separatedSpans, serializeHost, setCaret, writeAtoms } from './prompt-dom.ts'
+import { mentionInsertion, queryAt, queryStart } from './ref-popup.ts'
+import type { QueryAnchor } from './ref-popup.ts'
 
 /**
  * 调用方伸进输入框里做的那几件事。
@@ -59,6 +70,14 @@ export interface PromptInputHandle {
    * 门，免得半枚标签落进提示词。
    */
   insertMention(mention: string): boolean
+  /**
+   * 收起候选弹窗：只是不再认正在打的这半枚 `@查询`，值里那串字符一个都不动。
+   *
+   * 走这条而不是让调用方自己把状态置空，是因为输入面身上还记着那半枚查询的**偏移**
+   * （框里滚动时要拿它把弹窗按回那一枚 `@` 上）。只清外部的状态，那笔账就留在了这里
+   * ——下一次滚动会把它重新报上去，弹窗在你已经 Esc 之后又自己冒出来。
+   */
+  dismissQuery(): void
 }
 
 /** Props of the reference-tag prompt input. */
@@ -78,11 +97,14 @@ export type PromptInputProps = {
   autoFocus?: boolean
   onKeyDown?: (event: ReactKeyboardEvent<HTMLDivElement>) => void
   /**
-   * 光标前正在打的那半枚 `@查询`（没有就是 `null`）。
+   * 光标前正在打的那半枚 `@查询`（没有就是 `null`），连同**那一枚 `@` 在视口里的位置**。
    *
-   * 上报而不是自己开菜单：候选是谁（这张卡能引用哪些文件）是调用方的事，输入面只认光标。
+   * 上报而不是自己开菜单：候选是谁（这张卡能引用哪些文件）是调用方的事，输入面只认光标；
+   * 而「弹窗该贴着哪一枚字符」也只有这里量得出来——`@` 是值里的一个偏移，落成屏幕上的
+   * 一个盒子要问 DOM。位置与查询一起报，是因为它们说的是同一个东西：调用方不必自己再
+   * 换算一遍偏移，也就不会算错一位。
    */
-  onQueryChange?: (query: string | null) => void
+  onQueryChange?: (query: string | null, anchor: QueryAnchor | null) => void
   /**
    * 调用方知道的那些「文件之外的事实」（类型、行号、缩略图、坐标）。
    *
@@ -161,25 +183,9 @@ function contentKey(
 }
 
 /**
- * 光标前那枚 `@查询` 是什么；不成半边记号就是 `null`。
- *
- * 与 `prompt-blocks.ts` 认记号的边界同一条：`@` 必须在词首（串首或前一字符是空白），
- * 查询里也不能有空白——否则用户打「see @ 2pm」这种话时菜单会自己冒出来。
+ * 光标前那枚 `@查询` 是什么、弹窗摆哪、插进去什么——三件事都在 `ref-popup.ts`（纯，node
+ * 环境可测）。这里只负责在正确的时机问一次、把 DOM 量出来的位置一起报上去。
  */
-function queryAt(text: string, caret: number): string | null {
-  const before = text.slice(0, caret)
-  const at = before.lastIndexOf('@')
-  if (at === -1) return null
-  if (at > 0 && !/\s/u.test(before[at - 1]!)) return null
-  const query = before.slice(at + 1)
-  return /\s/u.test(query) ? null : query
-}
-
-/** 那半枚 `@查询` 在值里的起点；没有查询就是光标自己。 */
-function queryStart(text: string, caret: number): number {
-  const query = queryAt(text, caret)
-  return query === null ? caret : caret - query.length - 1
-}
 
 /** The reference-tag prompt input. */
 export function PromptInput(props: PromptInputProps) {
@@ -203,6 +209,13 @@ export function PromptInput(props: PromptInputProps) {
    * 插入就会落到末尾去。所以每次拿到位置就记下来。
    */
   const caretRef = useRef<Span>({ start: 0, end: 0 })
+  /**
+   * 那半枚 `@查询` 的起点（就是那一枚 `@` 在值里的偏移）；`-1` = 没在写引用。
+   *
+   * 单独记着是为了**框里滚动时**还能把弹窗按回那一枚字符上：滚动不改值、也不改光标，只
+   * 改它们在屏幕上的位置；而重报是从光标重算一遍的，重算得出同一个查询，量的却是新位置。
+   */
+  const queryStartRef = useRef(-1)
   /** 输入法正在合成：这期间 DOM 归它，我们一个字都不许动。 */
   const composing = useRef(false)
   /**
@@ -241,13 +254,37 @@ export function PromptInput(props: PromptInputProps) {
     return caretRef.current
   }, [])
 
-  /** 把「光标前那半枚 @查询」上报给调用方（它拿这个开候选菜单）。 */
+  /**
+   * 报一次「光标前那半枚 `@查询`」**连同那一枚 `@` 的位置**（调用方按它开候选弹窗）。
+   *
+   * `text` / `caret` 由调用方给：`onInput` 手上那份刚从 DOM 读出来，比 `latest` 里那份
+   * 早一拍——拿旧值算出来的查询会差一个字符。
+   */
+  const report = useCallback((text: string, caret: number) => {
+    const host = hostRef.current
+    const query = queryAt(text, caret)
+    queryStartRef.current = query === null ? -1 : queryStart(text, caret)
+    // 量不到那一枚字符（空行上有的浏览器给出 0×0）就退回**整个框**当落点：弹窗会贴在框
+    // 下面，位置不算精准，但绝不会「什么都不显示」——静默的失败比一个粗糙的落点更坏。
+    const anchor =
+      query === null || host === null
+        ? null
+        : (charRect(host, queryStartRef.current) ?? host.getBoundingClientRect())
+    latest.current.onQueryChange?.(query, anchor)
+  }, [])
+
+  /** 从当下这份值与光标重报一次（焦点、按键、点击、滚动之后都走它）。 */
   const syncQuery = useCallback(() => {
     const host = hostRef.current
-    const caret = host === null ? undefined : caretFlat(host)
-    const span = caret === undefined ? readCaret() : { start: caret, end: caret }
-    latest.current.onQueryChange?.(queryAt(latest.current.value, span.end))
-  }, [readCaret])
+    if (host === null) {
+      queryStartRef.current = -1
+      latest.current.onQueryChange?.(null, null)
+      return
+    }
+    // 顺手把光标（或选区）记下来再报：候选菜单是**点**出去的，点的那一下焦点就离开框里，
+    // 那时再问浏览器要位置要不到——插进去的记号会落到开头或末尾去（见 `insertMention`）。
+    report(latest.current.value, readCaret().end)
+  }, [readCaret, report])
 
   /** 在光标处（或选区上）插一段纯文本，光标落在它后面。 */
   const insertText = useCallback(
@@ -266,22 +303,35 @@ export function PromptInput(props: PromptInputProps) {
    * 边界上的行为并不一致（有时顺手带掉旁边的空白）。所以这里直接按值判——光标正好落在某
    * 枚标签的界上（扁平偏移与它对齐）就自己删，并且 `preventDefault` 掉那次默认删除：一
    * 条路，没有第二种结果。
+   *
+   * 还有一条**对账**：值里那枚记号必须与界面上这枚标签冻着的是**同一串字符**。合成期间
+   * 值可能短暂地比标签长（字被拼进了路径，见 `readBack`），那时按值删就会把用户刚打的字
+   * 一起抹掉——宁可退回浏览器默认（一个字一个字删），也不要整块消失。
    */
   const deleteNeighbourChip = useCallback(
     (key: 'Backspace' | 'Delete'): boolean => {
-      const caret = caretFlat(hostRef.current as HTMLElement)
+      const host = hostRef.current
+      if (host === null) return false
+      const caret = caretFlat(host)
       if (caret === undefined) return false
       const text = latest.current.value
+      const chips = chipSpans(host)
       let at = 0
+      let index = 0
       for (const atom of promptAtoms(text, latest.current.refs, latest.current.folds)) {
         const length = atom.kind === 'text' ? atom.text.length : atom.reference.id.length
-        if (atom.kind === 'ref' && key === 'Backspace' && at + length === caret) {
-          apply(text.slice(0, at) + text.slice(caret), at)
-          return true
-        }
-        if (atom.kind === 'ref' && key === 'Delete' && at === caret) {
-          apply(text.slice(0, at) + text.slice(at + length), at)
-          return true
+        if (atom.kind === 'ref') {
+          const chip = chips[index]
+          index += 1
+          const same = chip !== undefined && chip.at === at && chip.token === atom.reference.id
+          if (same && key === 'Backspace' && at + length === caret) {
+            apply(text.slice(0, at) + text.slice(caret), at)
+            return true
+          }
+          if (same && key === 'Delete' && at === caret) {
+            apply(text.slice(0, at) + text.slice(at + length), at)
+            return true
+          }
         }
         at += length
       }
@@ -307,21 +357,25 @@ export function PromptInput(props: PromptInputProps) {
       insertMention(mention: string) {
         const host = hostRef.current
         if (host === null || mention === '') return false
-        // 菜单是点出去的：焦点先要回来，光标才有地方落（它落在我们刚放的那一处）。
+        // **先读位置，再把焦点要回来**：菜单是点出去的，这一下焦点才刚离开框里；反过来
+        // （先 focus）浏览器可能把选区摆回它自己记着的那一处，读到的就是另一个位置了。
+        const span = readCaret()
         host.focus()
         const text = latest.current.value
-        const span = caretRef.current
-        const start = queryStart(text, span.start)
-        const tail = text.slice(span.end)
-        // 后面紧跟的是字就把自己那枚记号封上（`@brief.md` 后面直接接「改成…」会把两个记号
-        // 粘成一个词）；后面本来就是空白或行尾就不再添空格。
-        const inserted = tail === '' || /^\s/u.test(tail) ? mention : `${mention} `
-        apply(`${text.slice(0, start)}${inserted}${tail}`, start + inserted.length)
-        latest.current.onQueryChange?.(null)
+        // 顶掉正在打的那半枚 `@查询`；句子中间敲的那个 `@` 前面补一个空格（记号只在词首
+        // 才算引用，见 `ref-popup.ts` 的 `mentionInsertion`）。
+        const next = mentionInsertion(text, { start: queryStart(text, span.end), end: span.end }, mention)
+        apply(next.text, next.caret)
+        queryStartRef.current = -1
+        latest.current.onQueryChange?.(null, null)
         return true
       },
+      dismissQuery() {
+        queryStartRef.current = -1
+        latest.current.onQueryChange?.(null, null)
+      },
     }),
-    [apply],
+    [apply, readCaret],
   )
   useImperativeHandle(handleRef, () => handle)
 
@@ -371,16 +425,50 @@ export function PromptInput(props: PromptInputProps) {
     // 「规则不存在」——这一条由评审把关，见 `canvas-panels.tsx` 同一处约定。
   }, [autoFocus])
 
-  /** 用户改过内容：读回值（标签吐回原文），再报一次光标前的查询。 */
-  const onInput = () => {
+  /**
+   * 读回值：序列化 → **把被标签吞掉的字补回一处分隔** → 记档 → 上报。
+   *
+   * 中间那一步是这枚 bug 的正解（用户原话：「在 @ 选中文件后面输入文本，删除时会直接删除
+   * 文件及以后的文本，而不是一个一个文字删除」）：写在标签右边紧贴处的字会被拼进路径——
+   * `@hero.png` + `abc` 成了 `@hero.pngabc`，那在值里是**另一份文件**，界面上却还是那枚
+   * 冻着的标签。于是值重新解析出的是**一整枚**原子，Backspace 一删就是整块（还顺手带走
+   * 后面的字）。补一个空格，字就回到「引用后面的文字」这个身份上。
+   *
+   * 输入法合成期间一个字都不许动（DOM 归它），合成结束时再补——所以两条路都走这里。
+   */
+  const readBack = useCallback(() => {
     const host = hostRef.current
     if (host === null) return
-    const text = serializeHost(host)
-    markRef.current = { text, key: contentKey(latest.current.refs, latest.current.folds) }
-    latest.current.onChange(text)
-    const caret = caretFlat(host)
-    latest.current.onQueryChange?.(queryAt(text, caret ?? text.length))
-  }
+    const typed = serializeHost(host)
+    let text = typed
+    let caret = caretFlat(host) ?? typed.length
+    if (!composing.current) {
+      // 浏览器在「这一行空了」时会自己塞一枚占位 `<br>`（`contenteditable` 的老办法），
+      // 序列化读回来就成了凭空多出的一个换行——删掉标签旁边最后一个空格时正好踩上，
+      // 删除的末尾就白白多出一个空行。判据：DOM 末节点是 `<br>`、读回来是个换行，而
+      // **上一次的值并不以换行结尾**（用户自己敲的 Enter 走 `apply`，到不了这里；粘贴
+      // 与换行也一样，只有浏览器默认那一下会留下这枚占位）。
+      const last = host.lastChild
+      if (last !== null && last.nodeName === 'BR' && typed.endsWith('\n') && !latest.current.value.endsWith('\n')) {
+        text = typed.slice(0, -1)
+        caret = Math.min(caret, text.length)
+      }
+      const fixed = separatedSpans(text, chipSpans(host), caret)
+      const next = fixed ?? (text === typed ? null : { text, caret })
+      if (next !== null) {
+        // 走 `apply`：重画、摆光标、`onChange` 一气做完，中间没有别人插得进来。
+        apply(next.text, next.caret)
+        report(next.text, next.caret)
+        return
+      }
+    }
+    markRef.current = { text: typed, key: contentKey(latest.current.refs, latest.current.folds) }
+    latest.current.onChange(typed)
+    // 打字的每一个字都从 DOM 读一次：这是「光标在哪儿」的唯一真源，隔一次读就可能停在
+    // 上一个字的位置上（候选菜单插进来时尤其要命）。
+    caretRef.current = { start: caret, end: caret }
+    report(typed, caret)
+  }, [apply, report])
 
   /**
    * 键盘：**先问调用方**（它有菜单、有发送快捷键），它没拦下才是输入面自己那两件事。
@@ -452,13 +540,15 @@ export function PromptInput(props: PromptInputProps) {
         aria-multiline="true"
         aria-placeholder={placeholder}
         spellCheck={spellCheck}
-        onInput={onInput}
+        onInput={readBack}
         onKeyDown={onKeyDownInternal}
         onCompositionStart={() => {
           composing.current = true
         }}
         onCompositionEnd={() => {
           composing.current = false
+          // 合成期间不让动 DOM（见 `readBack`），所以「贴着标签打的中文」在这里补分隔。
+          readBack()
         }}
         onCopy={onCopy}
         onCut={onCut}
@@ -466,9 +556,17 @@ export function PromptInput(props: PromptInputProps) {
         onDrop={onDrop}
         onDragOver={(event) => event.preventDefault()}
         onFocus={syncQuery}
-        onBlur={() => latest.current.onQueryChange?.(null)}
+        onBlur={() => {
+          queryStartRef.current = -1
+          latest.current.onQueryChange?.(null, null)
+        }}
         onKeyUp={syncQuery}
         onMouseUp={syncQuery}
+        // 框里滚了一下：值没变、光标没变，只有它们在屏幕上的位置变了——弹窗得跟着那一枚
+        // `@` 走（不然它停在滚动前的地方，或者干脆被滚出框外还挂在原处）。
+        onScroll={() => {
+          if (queryStartRef.current >= 0) syncQuery()
+        }}
       />
       {/* 占位符自己画（`contenteditable` 没有 placeholder）：值里**只有空白**时露出来，
           指针全开给下面那层，点它等于点进框里。 */}

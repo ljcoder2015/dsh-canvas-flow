@@ -26,6 +26,7 @@ import {
   type SceneNode,
   type SerializedInstanceOverrideState,
 } from '@open-pencil/scene-graph'
+import { base64ToBytes, bytesToBase64 } from './image-bytes.ts'
 
 /** The envelope header every `.design` file starts with. */
 export const DESIGN_FILE_PREFIX = 'dsh-design-'
@@ -168,6 +169,21 @@ interface DesignSnapshot {
   version: 2
   rootId: string
   nodes: SceneNode[]
+  /**
+   * 嵌进稿子里的图片字节（v1.96 图片图层）：`graph.images` 的落盘形态，`data` 是 base64。
+   *
+   * **可选，且只在有图时写出**——没有图片图层的稿子，信封与 v1.95 之前的逐字节相同（diff
+   * 干净，老版本也照读不误）。反过来，老版本读到带 `images` 的快照只是忽略这个字段：图层
+   * 还在，填充是 IMAGE 但字节取不到，画出来是一块空——这就是「引用了不存在的图」的诚实
+   * 降级，不需要版本位。
+   */
+  images?: DesignImageStore[]
+}
+
+/** One stored image of the snapshot: content hash → base64 bytes. */
+interface DesignImageStore {
+  hash: string
+  data: string
 }
 
 /** Encode a document into the text envelope: one header line, JSON body. */
@@ -177,8 +193,15 @@ export function encodeDesignFile(graph: SceneGraph): string {
     version: 2,
     rootId: graph.rootId,
     nodes: [...graph.nodes.values()],
+    // 有图才写这一格：没有图片图层的稿子保持旧信封形状（见 DesignSnapshot.images）。
+    ...(graph.images.size === 0 ? {} : { images: designImagesOf(graph) }),
   }
   return `${DESIGN_FILE_PREFIX}${DESIGN_FILE_VERSION}\n${JSON.stringify(snapshot)}`
+}
+
+/** `graph.images` → 快照的那一格（字节都过一遍 base64）。 */
+function designImagesOf(graph: SceneGraph): DesignImageStore[] {
+  return [...graph.images.entries()].map(([hash, bytes]) => ({ hash, data: bytesToBase64(bytes) }))
 }
 
 /**
@@ -240,6 +263,22 @@ export function decodeDesignFile(text: string): SceneGraph {
     }
     node.instanceOverrides = reviveInstanceOverrides(node.instanceOverrides)
     graph.nodes.set(node.id, node)
+  }
+  // 图片字节（v1.96）：有这一格就复活进 graph.images——引擎与渲染器都按 hash 从这张表取
+  // 字节。结构不对是**快照坏了**（与 nodes 同一码），但个别条目坏只影响那一张图，跳过它
+  // 比整份稿子打不开诚实（图层还在，画的是一块空填充，而不是「文件坏了」）。
+  if (snapshot.images !== undefined) {
+    if (!Array.isArray(snapshot.images)) {
+      throw new DesignDocumentError('bad-snapshot', '设计文档内容损坏（图片表结构不对）')
+    }
+    for (const entry of snapshot.images) {
+      if (typeof entry?.hash !== 'string' || typeof entry?.data !== 'string') continue
+      try {
+        graph.images.set(entry.hash, base64ToBytes(entry.data))
+      } catch {
+        // 这一段 base64 解不开：跳过，别让一张坏图拖死整份文档。
+      }
+    }
   }
   return graph
 }

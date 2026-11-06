@@ -17,6 +17,7 @@
  * 没有更深的降级了）。
  */
 import { createEditor } from '@open-pencil/core/editor'
+import { CONTAINER_TYPES } from '@open-pencil/scene-graph/node-defaults'
 import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
 import { colorFromCss, colorToCss, decodeDesignFile, encodeDesignFile, DesignDocumentError } from '../../../../core/artifact/design/document.ts'
 import { clampPointCount, clampRatio } from '../../../../core/artifact/design/node-props.ts'
@@ -63,6 +64,17 @@ export function createDesignEngine(args: CreateDesignEngineArgs): Promise<Engine
  * 这里创建，也只能由这里的渲染器画。实现见 `design-io.ts`。
  */
 export { exportDesignDocument as designExport } from './design-io.ts'
+
+/**
+ * 字体加载进度（v1.88）：这一份 chunk 的**第三个出口**。
+ *
+ * 为什么进度要在这里出而不是让客户端自己数：字体只有这一侧在取（`design-skia.ts` 的
+ * `loadFontFile` 按响应流读），客户端连「这一轮要取几支」都不知道。做成订阅而不是塞进
+ * `createDesignEngine` 的入参，是因为**最长的那一段在引擎建完之后才开始**——中文字面
+ * 17.7MB 是后台到货的（首帧不等它），如果进度跟着引擎对象的寿命走，那 17.7MB 一出发就
+ * 没人报了，而这恰恰是用户最想看见的那一段。
+ */
+export { subscribeDesignFonts } from './design-skia.ts'
 
 async function buildEngine({ twoD, gl, runtime, envelope, onRepaint }: CreateDesignEngineArgs): Promise<EngineOutcome> {
   let graph: SceneGraph
@@ -491,7 +503,9 @@ async function buildEngine({ twoD, gl, runtime, envelope, onRepaint }: CreateDes
         graph.getChildren(parentId).map((node) => ({
           id: node.id,
           name: node.name,
-          type: node.type.toLowerCase(),
+          // 图片图层（v1.96）本体是带 IMAGE 填充的矩形——图层树里按 Figma 的口径认成
+          // 「图片」，别让它顶着矩形徽标让人找不到刚插图的那一层。
+          type: node.fills.some((paint) => paint.type === 'IMAGE') ? 'image' : node.type.toLowerCase(),
           visible: node.visible,
           locked: node.locked,
           children: build(node.id),
@@ -530,6 +544,87 @@ async function buildEngine({ twoD, gl, runtime, envelope, onRepaint }: CreateDes
       editor.deletePage(pageId)
     },
     serialize: (): string => encodeDesignFile(graph),
+    // 图片图层（v1.96）：机制与上游「拖文件进画布」同一条路（editor/clipboard/assets 的
+    // placeFiles），但**不走它**——那条路靠 `ctx.getCk()` 解尺寸，而这份引擎里的编辑器从不
+    // setCanvasKit（渲染器住在 design-skia 里、不回接），不接的话位图会被静默跳过。这里用
+    // 浏览器自己的 createImageBitmap 解尺寸，两种渲染后端下都能落图。
+    addImageLayers: async (files: readonly File[], center: { x: number; y: number }): Promise<string[]> => {
+      const assets: { name: string; bytes: Uint8Array; width: number; height: number }[] = []
+      for (const file of files) {
+        if (!IMAGE_TYPES.has(file.type)) continue
+        const buffer = await file.arrayBuffer()
+        const size = await decodeImageSize(buffer)
+        if (size === null) continue
+        assets.push({ name: file.name.replace(/\.[^.]+$/, ''), bytes: new Uint8Array(buffer), ...size })
+      }
+      if (assets.length === 0) return []
+
+      const previousSelection = new Set(editor.state.selectedIds)
+      const pageId = editor.state.currentPageId
+      // 落点父级：单选了一个容器就贴进容器（Figma 的「贴进」语义），否则落在当前页上。
+      const parentId = imageParentId(graph, pageId, previousSelection)
+      // 容器里的坐标是相对父级的：把世界中心收到父级坐标系里（容器旋转忽略——图片落进
+      // 旋转容器的正确补偿属于变换合成那一课，这里先保证位置不飞）。
+      const origin = graph.getAbsolutePosition(parentId)
+      const gap = 20
+      const totalWidth = assets.reduce((total, asset) => total + asset.width, 0) + gap * (assets.length - 1)
+      let x = center.x - origin.x - totalWidth / 2
+      const y = center.y - origin.y - Math.max(...assets.map((asset) => asset.height)) / 2
+
+      const created: string[] = []
+      const snapshots: SceneNode[] = []
+      for (const asset of assets) {
+        // 字节进图的图片表（hash 认）：填充只存 hash，序列化时整表落盘（见 document.ts）。
+        const hash = editor.storeImage(asset.bytes)
+        const node = graph.createNode('RECTANGLE', parentId, {
+          name: asset.name,
+          x,
+          y,
+          width: asset.width,
+          height: asset.height,
+          fills: [
+            {
+              type: 'IMAGE',
+              imageHash: hash,
+              imageScaleMode: 'FILL',
+              color: { r: 0, g: 0, b: 0, a: 0 },
+              opacity: 1,
+              visible: true,
+            },
+          ],
+        })
+        created.push(node.id)
+        snapshots.push(structuredClone(node))
+        x += asset.width + gap
+      }
+      // 自动布局的父级要重算一次（普通容器是空算，代价可忽略）；场景变更经编辑器的图订阅
+      // 自会 bump sceneVersion，Skia 的 picture 缓存跟着失效。
+      editor.runLayoutForNode(parentId)
+      const before = historyEvents
+      editor.pushUndoEntry({
+        label: '插入图片',
+        forward: () => {
+          for (const snap of snapshots) {
+            // 整份快照当 overrides 用，但 id 要剥掉——身份由 createNodeWithId 的第一个参数给，
+            // 再从 overrides 里带一遍等于同一个字段有两个来源（`void` 只为让剥下来的那一份
+            // 在 lint 眼里算「用过了」）。
+            const { id, parentId: snapParent, ...overrides } = structuredClone(snap)
+            void id
+            graph.createNodeWithId(snap.id, snap.type, snapParent, overrides)
+          }
+          editor.runLayoutForNode(pageId)
+          editor.select(created, false)
+        },
+        inverse: () => {
+          for (const id of [...created].reverse()) graph.deleteNode(id)
+          editor.runLayoutForNode(pageId)
+          editor.select([...previousSelection], false)
+        },
+      })
+      recordHistory(before)
+      editor.select(created, false)
+      return created
+    },
     onDirty(cb: () => void): () => void {
       // history:changed = 改稿/undo（写盘节律的信号源）；page:changed = 切页
       // 完成（异步 switchPage 的终点，viewer 借它重画并刷新面板）。
@@ -585,6 +680,52 @@ async function buildEngine({ twoD, gl, runtime, envelope, onRepaint }: CreateDes
 function firstSolidCss(node: SceneNode): string | null {
   const paint = node.fills.find((entry) => entry.visible !== false && entry.type === 'SOLID')
   return paint === undefined ? null : colorToCss(paint.color)
+}
+
+// ── 图片图层（v1.96） ───────────────────────────────────────────────────────
+
+/** 落得成图片图层的位图类型——与上游 placeFiles 那张表同一份（svg 走矢量导入，另一条路）。 */
+const IMAGE_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif'])
+
+/** 图片落图时的尺寸上限：更大的图按比例缩进来（与上游同一条纪律，防万兆像素的图拖死渲染）。 */
+const IMAGE_MAX_DIMENSION = 4096
+
+/**
+ * 解一份位图的原始尺寸；解不开返回 `null`（那份文件就跳过）。
+ *
+ * 用浏览器自己的 `createImageBitmap` 而不是 CanvasKit：引擎不握着 ck（见 addImageLayers
+ * 的注释），而这条路在两种渲染后端下都得能走。收 `ArrayBuffer` 而不是视图：Blob 的
+ * BlobPart 只认 ArrayBuffer 背着的那一半。
+ */
+async function decodeImageSize(buffer: ArrayBuffer): Promise<{ width: number; height: number } | null> {
+  if (typeof createImageBitmap !== 'function') return null
+  try {
+    const bitmap = await createImageBitmap(new Blob([buffer]))
+    const width = bitmap.width
+    const height = bitmap.height
+    bitmap.close()
+    if (width === 0 || height === 0) return null
+    if (width > IMAGE_MAX_DIMENSION || height > IMAGE_MAX_DIMENSION) {
+      const ratio = Math.min(IMAGE_MAX_DIMENSION / width, IMAGE_MAX_DIMENSION / height)
+      return { width: Math.round(width * ratio), height: Math.round(height * ratio) }
+    }
+    return { width, height }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 图片落进谁：单选了一个容器就贴进容器（与上游 resolvePasteTarget 的容器那半同语义），
+ * 否则落在当前页上——多选时落进谁没有一枚共同的容器说得清，页面是最不意外的答案。
+ */
+function imageParentId(graph: SceneGraph, pageId: string, selection: ReadonlySet<string>): string {
+  const ids = [...selection]
+  if (ids.length === 1) {
+    const node = graph.getNode(ids[0])
+    if (node !== undefined && CONTAINER_TYPES.has(node.type) && node.type !== 'CANVAS') return node.id
+  }
+  return pageId
 }
 
 /**

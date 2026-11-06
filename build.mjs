@@ -92,6 +92,18 @@ await build({
 await build({
   entryPoints: ['src/client/artifact/viewers/design/design-engine.ts'], outfile: 'lib/assets/design-engine.js',
   bundle: true, format: 'esm', platform: 'browser', target: ['es2022'], sourcemap: true,
+  /**
+   * 压。这一份是**浏览器首屏要下载并解析的代码**，与 `lib/client.js` 同理：开预览要等它，
+   * 而未压缩的 6.2MB 里有大量换行与缩进（实测压完 3.3MB，gzip 1.35MB → 1.05MB）。
+   *
+   * 两个已知的「压不得」在这份 chunk 里都不成立：`new URL('./export-worker.ts',
+   * import.meta.url)` 与资产 URL 都是**运行时字符串**，esbuild 不动字符串字面量；
+   * `import.meta.url` 在 ESM 输出里原样保留。唯一要盯的是 open-pencil 有没有靠函数名
+   * 或类名做分派——它在浏览器里的分派靠 `node.type` 这种字符串，不靠 `.name`。
+   * 改这一行之前先跑一次 `.workbuddy/tmp/perf` 那个探针（它会把 chunk 真的 import 进来
+   * 并画一帧），只验「体积小了」不算数。
+   */
+  minify: true,
   // core 的 editor 分支有 node 才走的动态 import（本地字体访问等），两种写法
   // 都出现：`node:fs` 与裸 `fs`。标 external 让打包通过，浏览器里永远执行不到。
   external: ['node:fs/promises', 'node:path', 'node:url', 'fs', 'path', 'url'],

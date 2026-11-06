@@ -29,7 +29,9 @@ import type { CardState } from '../../wire/session-read.ts'
 import type { CanvasBridge } from '../../wire/bridge.ts'
 import type { Translate } from '../../ui/locales.ts'
 import { renderMarkdown } from '../../artifact/viewers/markdown.ts'
+import { markdownImageSrc } from '../../artifact/viewers/markdown-image.ts'
 import { useDesignShot, useWebAppHtml } from './card-shot.ts'
+import { useDesignEngineWarmup } from './design-warmup.ts'
 import { useAspectReport, useMediaAsset } from './card-media.ts'
 import { mediaFaceOf, type MediaAsset, type MediaFace } from './media-face.ts'
 import { sizeOfCard } from '../../../core/canvas/card/card-size.ts'
@@ -63,6 +65,8 @@ export interface CardTileProps {
   onConnectDrop: (cardId: string, side: 'in' | 'out') => void
   /** Double-click: select the card and open its artifact fullscreen (F3.8). */
   onActivate: (cardId: string) => void
+  /** 卡面的「发布」钮（v1.93，文本卡）：打开产物弹窗并直发展开发布面板。 */
+  onPublish?: (cardId: string) => void
   /** Commit a new name (F1.12). The host settles the path and answers with the card. */
   onRename: (cardId: string, name: string) => void
 }
@@ -131,7 +135,7 @@ function MediaPreview({ asset, face, t }: { asset: MediaAsset; face: MediaFace; 
 
 /** Render one artifact card. */
 export function CardTile(props: CardTileProps) {
-  const { card, state, summary, projectId, bridge, selected, connecting, linkOver, zoom, t, onSelect, onMove, onDragMove, onConnectStart, onConnectDrop, onActivate, onRename } = props
+  const { card, state, summary, projectId, bridge, selected, connecting, linkOver, zoom, t, onSelect, onMove, onDragMove, onConnectStart, onConnectDrop, onActivate, onPublish, onRename } = props
   const [offset, setOffset] = useState<Point | undefined>(undefined)
   const drag = useRef<{ x: number; y: number; moved: boolean; name: boolean } | undefined>(undefined)
 
@@ -197,8 +201,16 @@ export function CardTile(props: CardTileProps) {
   // 重探出来的 kind 才是当前的类型表认的那一个（app）。
   const kind = summary?.kind ?? card.kind
   const mdHtml = useMemo(
-    () => (kind === 'markdown' && summary !== undefined && summary.head !== '' ? renderMarkdown(balancedFences(summary.head)) : ''),
-    [kind, summary],
+    () =>
+      kind === 'markdown' && summary !== undefined && summary.head !== ''
+        ? renderMarkdown(balancedFences(summary.head), {
+            // 卡面与全屏预览走同一个解析器（v1.92）：卡面上也有 projectId 与产物路径，
+            // 相对引用能换写成工作区路由，插图在卡上就是那一枚缩略图。没有这一步时，
+            // 图片引用会被链接规则加工成「!说明文字」——一段谁也看不懂的残句。
+            imageSrc: (src) => markdownImageSrc(projectId, card.file, src),
+          })
+        : '',
+    [kind, summary, projectId, card.file],
   )
   const mediaFace = mediaFaceOf(kind)
   const media = useMediaAsset(bridge, projectId, card.id, summary?.bytes ?? 0, mediaFace !== undefined && summary !== undefined)
@@ -206,6 +218,9 @@ export function CardTile(props: CardTileProps) {
   // 这张卡于是按产物自己的形状坐。只在量到的比例与记录不同时才写。
   useAspectReport(bridge, projectId, card.id, media, mediaFace, card.aspect)
   const designShot = useDesignShot(bridge, projectId, card.id, summary?.bytes ?? 0, kind === 'design' && summary !== undefined)
+  // 这张设计卡的画面已经在板上了（缩略图画出来了）⇒ 空闲时先把预览引擎那一趟冷启动
+  // 做掉。它只在「看得见的设计卡」上触发，也只做一次（见 design-warmup.ts）。
+  useDesignEngineWarmup(kind === 'design' && designShot !== undefined)
   const frameHtml = useWebAppHtml(
     bridge,
     projectId,
@@ -318,6 +333,23 @@ export function CardTile(props: CardTileProps) {
             {card.name}
           </div>
         )}
+        {onPublish !== undefined && kind === 'markdown' && !renaming ? (
+          // 文本卡独有的一枚（v1.93 → v1.95）：hover/选中才显形，点下去直接进发布页。
+          // 指针事件自己吃掉——卡头是拖拽把柄，这枚按钮不能把按下变成拖卡片。
+          <button
+            type="button"
+            className="dsh-canvas-card-publish"
+            title={t('canvas.card.publish')}
+            onPointerDown={(event) => event.stopPropagation()}
+            onDoubleClick={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation()
+              onPublish(card.id)
+            }}
+          >
+            ↥
+          </button>
+        ) : null}
       </div>
 
       <div className="dsh-canvas-card-preview">
