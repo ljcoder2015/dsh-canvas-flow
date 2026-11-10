@@ -1109,10 +1109,15 @@ body[data-ds-dark-theme] .dsh-canvas-root{
 .dsh-canvas-publish-nav-title{font:600 14px/20px var(--dsh-font);color:var(--dsh-fg)}
 .dsh-canvas-publish-nav-file{font:11px/16px var(--dsh-mono);color:var(--dsh-fg-3);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-canvas-publish-account-pick{display:flex;align-items:center;gap:6px;font:11px/16px var(--dsh-font);color:var(--dsh-fg-3)}
-.dsh-canvas-publish-select{max-width:140px;padding:3px 6px;border-radius:6px;border:1px solid var(--dsh-hairline);
-  background:var(--dsh-card);font:12px/18px var(--dsh-font);color:var(--dsh-fg)}
 .dsh-canvas-publish-body{flex:1;display:flex;min-height:0;min-width:0}
+/* 正文图片条（v2.05）：平台编辑器不收正文内嵌的图，位图粘贴才是通用路——每张图
+   一枚缩略图加一枚复制钮，用户去编辑器对应位置贴，平台自己传图床。横滑，图多不挤版。 */
+.dsh-canvas-publish-images{flex:none;padding:8px 16px;border-bottom:1px solid var(--dsh-hairline);background:var(--dsh-card)}
+.dsh-canvas-publish-images-hint{display:block;font:11px/17px var(--dsh-font);color:var(--dsh-fg-3)}
+.dsh-canvas-publish-images-row{display:flex;gap:12px;margin-top:6px;overflow-x:auto;padding-bottom:2px}
+.dsh-canvas-publish-image{flex:none;margin:0;display:flex;flex-direction:column;gap:4px;align-items:flex-start}
+.dsh-canvas-publish-image img{display:block;width:96px;height:64px;object-fit:cover;border-radius:6px;
+  border:1px solid var(--dsh-hairline);background:var(--dsh-soft)}
 .dsh-canvas-publish-side{width:176px;flex:none;display:flex;flex-direction:column;gap:4px;padding:12px 10px;
   border-right:1px solid var(--dsh-hairline);background:var(--dsh-card);overflow:auto}
 .dsh-canvas-publish-side-title{padding:0 4px 6px;font:600 11px/16px var(--dsh-font);color:var(--dsh-fg-3);
@@ -1129,6 +1134,7 @@ body[data-ds-dark-theme] .dsh-canvas-root{
 .dsh-canvas-publish-editor{flex:1;overflow:auto;padding:20px;display:flex;justify-content:center;align-items:flex-start}
 .dsh-canvas-publish-platform-name{font:600 12px/18px var(--dsh-font);color:var(--dsh-fg);flex:none}
 .dsh-canvas-publish-chars{font:11px/16px var(--dsh-mono);color:var(--dsh-fg-3);flex:none}
+.dsh-canvas-publish-hint{font:11px/16px var(--dsh-font);color:var(--dsh-fg-3)}
 .dsh-canvas-publish-over{font:11px/16px var(--dsh-font);color:#c26a1f}
 .dsh-canvas-publish-note{margin:6px 0 0;font:11px/17px var(--dsh-font);color:var(--dsh-fg-3)}
 .dsh-canvas-publish-note.is-ok{color:var(--dsh-fg)}
@@ -1136,40 +1142,65 @@ body[data-ds-dark-theme] .dsh-canvas-root{
 .dsh-canvas-publish-note a:hover{text-decoration:underline}
 .dsh-canvas-publish-foot-note{margin:0;padding:6px 16px 12px;background:var(--dsh-surface)}
 .dsh-canvas-publish-inline{display:flex;align-items:center;gap:5px;font:11px/16px var(--dsh-font);color:var(--dsh-fg-3)}
-/* 编辑纸：适配产物就是按平台正文排的（内联样式自带颜色），白纸是**文档预览**的
-   语义、不是面板 chrome——所以这里刻意不用主题令牌，暗色下它也该是白的。 */
-.dsh-canvas-publish-sheet{width:min(720px,100%);box-sizing:border-box;background:#ffffff;color:#333333;
-  border-radius:10px;border:1px solid var(--dsh-hairline);padding:28px 30px;min-height:100%;
-  overflow-wrap:break-word}
-.dsh-canvas-publish-sheet .dsh-canvas-md{font:15px/1.8 var(--dsh-font);color:#333333}
-.dsh-canvas-publish-plain{white-space:pre-wrap;word-break:break-word;font:14px/1.9 var(--dsh-font);margin:0}
+/* 阅读预览（v2.00）：预览对的是**读者在那家平台上看到的那一版**，不是「粘进编辑器
+   的内联样式版」——字号、行距、段距、链接色、正文宽都按平台自己的阅读页来。版式数据
+   在 platforms.ts 的 reader 上（readerVars 产出一组 --rd-*），这里只描述「正文怎么排」，
+   值一律走变量。白底是**文档预览**的语义、不是面板 chrome，所以这里刻意不用主题令牌：
+   暗色下它也该是白的。（本文件是模板字符串：注释里不许出现反引号。） */
+.dsh-canvas-publish-stage{display:flex;flex-direction:column;flex:none;width:min(var(--rd-width,720px),100%);min-height:100%}
+.dsh-canvas-publish-skin{flex:none;margin:0;padding:0 2px 6px;font:11px/16px var(--dsh-font);color:var(--dsh-fg-3)}
+.dsh-canvas-publish-read{flex:1;box-sizing:border-box;width:100%;min-height:100%;padding:var(--rd-pad,28px 30px);
+  border-radius:10px;border:1px solid var(--dsh-hairline);background:#ffffff;
+  font-family:var(--rd-font,var(--dsh-font));font-size:var(--rd-size,15px);line-height:var(--rd-line,1.8);
+  color:var(--rd-color,#333333);overflow-wrap:break-word;-webkit-font-smoothing:antialiased}
+.dsh-canvas-publish-read>:first-child{margin-top:0}
+.dsh-canvas-publish-read p{margin:0 0 var(--rd-gap,16px);font-size:var(--rd-size,15px);
+  line-height:var(--rd-line,1.8);color:var(--rd-color,#333333)}
+.dsh-canvas-publish-read h1,.dsh-canvas-publish-read h2,.dsh-canvas-publish-read h3,.dsh-canvas-publish-read h4{
+  margin:var(--rd-gap,16px) 0 var(--rd-gap-sm,9px);color:var(--rd-heading,#1a1a1a);font-weight:600;line-height:1.45}
+.dsh-canvas-publish-read h1{font-size:calc(var(--rd-size,15px) + 5px)}
+.dsh-canvas-publish-read h2{font-size:calc(var(--rd-size,15px) + 2px)}
+.dsh-canvas-publish-read h3{font-size:calc(var(--rd-size,15px) + 1px)}
+.dsh-canvas-publish-read h4{font-size:var(--rd-size,15px)}
+.dsh-canvas-publish-read ul,.dsh-canvas-publish-read ol{margin:0 0 var(--rd-gap,16px);padding-left:1.4em;
+  font-size:var(--rd-size,15px);line-height:var(--rd-line,1.8);color:var(--rd-color,#333333)}
+.dsh-canvas-publish-read li{margin:0 0 4px}
+.dsh-canvas-publish-read blockquote{margin:0 0 var(--rd-gap,16px);padding:10px 14px;
+  border-left:3px solid var(--rd-quote-edge,#e0e0e0);border-radius:0 4px 4px 0;
+  background:var(--rd-quote-bg,#f7f7f7);color:var(--rd-quote-text,#666666)}
+.dsh-canvas-publish-read blockquote p{color:var(--rd-quote-text,#666666);margin:0 0 var(--rd-gap-sm,9px)}
+.dsh-canvas-publish-read blockquote>:last-child{margin-bottom:0}
+.dsh-canvas-publish-read a{color:var(--rd-link,#576b95);text-decoration:none}
+.dsh-canvas-publish-read strong{color:var(--rd-heading,#1a1a1a);font-weight:600}
+.dsh-canvas-publish-read img{display:block;max-width:100%;height:auto;margin:0 auto var(--rd-gap,16px);
+  border-radius:var(--rd-image-radius,4px)}
+.dsh-canvas-publish-read hr{margin:calc(var(--rd-gap,16px) * 1.5) 0;border:none;border-top:1px solid #ebebeb}
+.dsh-canvas-publish-read pre{margin:0 0 var(--rd-gap,16px);padding:12px 14px;border-radius:6px;
+  background:var(--rd-code-bg,#f5f5f5);overflow-x:auto}
+.dsh-canvas-publish-read pre code{font:13px/1.6 var(--dsh-mono);color:var(--rd-heading,#1a1a1a);
+  background:none;padding:0;border-radius:0}
+.dsh-canvas-publish-read code{font:13px/1.6 var(--dsh-mono);background:var(--rd-code-bg,#f5f5f5);
+  border-radius:4px;padding:1px 5px;color:var(--rd-heading,#1a1a1a)}
+.dsh-canvas-publish-para{white-space:pre-wrap}
+/* 笔记形态（v2.01，小红书）：**图在上、文在下**——读者第一眼是封面，然后才是标题、
+   作者、正文；多图横滑（吸附），与手机上翻笔记一致。封面按图自身比例铺满正文宽
+   （宽图不硬裁成 3:4，裁掉的是内容），只受一个高度上限。纸本身不再吃 --rd-pad：
+   留白交给正文段，封面才能贴到纸边。 */
+.dsh-canvas-publish-read.dsh-canvas-publish-note{padding:8px 8px 22px}
+.dsh-canvas-publish-note-gallery-wrap{position:relative}
+.dsh-canvas-publish-note-gallery{display:flex;gap:6px;overflow-x:auto;scroll-snap-type:x mandatory}
+.dsh-canvas-publish-note-gallery::-webkit-scrollbar{display:none}
+.dsh-canvas-publish-read .dsh-canvas-publish-note-cover{flex:0 0 100%;width:100%;height:auto;max-height:440px;
+  margin:0;object-fit:cover;border-radius:var(--rd-image-radius,8px);scroll-snap-align:start;background:#f4f4f4}
+.dsh-canvas-publish-note-count{position:absolute;top:8px;right:8px;padding:0 7px;border-radius:999px;
+  background:rgba(0,0,0,.45);color:#ffffff;font:11px/18px var(--dsh-font)}
+.dsh-canvas-publish-note-body{padding:12px 8px 0}
+.dsh-canvas-publish-read .dsh-canvas-publish-note-title{margin:0 0 8px;
+  font-size:calc(var(--rd-size,15px) + 2px);line-height:1.4;font-weight:600;color:var(--rd-heading,#1a1a1a)}
 .dsh-canvas-publish-source{width:min(720px,100%);box-sizing:border-box;min-height:100%;resize:none;
   padding:20px 22px;border-radius:10px;border:1px solid var(--dsh-hairline);background:var(--dsh-card);
   color:var(--dsh-fg);font:12px/1.8 var(--dsh-mono)}
 .dsh-canvas-publish-source:focus{outline:none;border-color:var(--dsh-breeze)}
-/* 账号管理（v1.95）：满屏一层的管理面——一平台可绑多个账号，绑定走「打开官网登录
-   + 粘贴凭证」。 */
-.dsh-canvas-publish-manage{position:absolute;inset:0;z-index:40;display:flex;align-items:center;
-  justify-content:center;background:rgba(0,0,0,.45);padding:20px}
-.dsh-canvas-publish-manage-card{width:min(560px,100%);max-height:100%;overflow:auto;box-sizing:border-box;
-  padding:16px 18px;border-radius:12px;border:1px solid var(--dsh-mid);background:var(--dsh-card);
-  color:var(--dsh-fg-2)}
-.dsh-canvas-publish-manage-head{display:flex;align-items:center;gap:8px;margin-bottom:4px}
-.dsh-canvas-publish-manage-section{padding:10px 0;border-top:1px solid var(--dsh-hairline)}
-.dsh-canvas-publish-manage-name{display:flex;align-items:center;gap:8px;margin-bottom:4px;
-  font:600 12px/18px var(--dsh-font);color:var(--dsh-fg)}
-.dsh-canvas-publish-accounts-hint{margin:0 0 6px;font:11px/16px var(--dsh-font);color:var(--dsh-fg-3)}
-.dsh-canvas-publish-account{display:flex;align-items:center;gap:8px;min-height:24px}
-.dsh-canvas-publish-account-name{font:500 12px/18px var(--dsh-font);color:var(--dsh-fg-2);flex:none}
-.dsh-canvas-publish-account-state{font:11px/16px var(--dsh-font);color:var(--dsh-fg-3);
-  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dsh-canvas-publish-account-form{display:flex;flex-direction:column;gap:6px;margin:6px 0 2px;
-  padding:8px 10px;border:1px solid var(--dsh-hairline);border-radius:8px;background:var(--dsh-soft)}
-.dsh-canvas-publish-account-form .dsh-canvas-publish-inline{justify-content:space-between;gap:8px}
-.dsh-canvas-publish-account-form-actions{display:flex;align-items:center;gap:8px}
-.dsh-canvas-publish-input{flex:1;min-width:0;box-sizing:border-box;padding:3px 8px;border-radius:6px;
-  border:1px solid var(--dsh-hairline);background:var(--dsh-card);font:12px/18px var(--dsh-font);color:var(--dsh-fg)}
-.dsh-canvas-publish-input:focus{outline:none;border-color:var(--dsh-breeze)}
 .dsh-canvas-dialog{width:min(520px,100%);max-height:100%;display:flex;flex-direction:column;border:1px solid var(--dsh-hairline);
   border-radius:8px;background:var(--dsh-card);overflow:hidden}
 .dsh-canvas-dialog-head{display:flex;align-items:center;gap:8px;padding:12px 14px;border-bottom:1px solid var(--dsh-hairline);

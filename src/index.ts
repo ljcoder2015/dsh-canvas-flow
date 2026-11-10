@@ -23,8 +23,6 @@ import { registerTools } from './host/tools.ts'
 import { registerAssetRoute } from './host/assets.ts'
 import { registerFontRoute } from './host/fonts.ts'
 import { registerWorkspaceRoute } from './host/workspace-assets.ts'
-import { registerPublishBindRoute } from './host/publish-bind.ts'
-import { registerPublishDeliverRoute } from './host/publish-deliver.ts'
 import { registerGlobalPrompt, PLUGIN_ID } from './host/prompt.ts'
 import { MediaProvider } from './host/media-provider.ts'
 import { mergeCapabilities, resolveCapabilities } from './capabilities.ts'
@@ -187,10 +185,6 @@ export async function apply(ctx: Context, config?: Config): Promise<void> {
   // 图文并茂（v1.92）：markdown 产物里引用的项目内图片经这条路由进浏览器预览。
   // 根目录按 projectId 现查（同步读存储域的内存表），未知 id 由路由 404。
   registerWorkspaceRoute(ctx, (projectId) => canvas.rootOf(projectId))
-  // 真实绑定（v1.97）：宿主拉起浏览器进平台登录页、经 CDP 收真 Cookie。
-  registerPublishBindRoute(ctx)
-  // 一键发布（v1.98）：宿主带账号真 Cookie 调平台接口（微博/知乎/公众号草稿箱）。
-  registerPublishDeliverRoute(ctx)
 
   ctx.effect(() => {
     const dispose = ctx.typert.register(TYPERT_MANIFEST)

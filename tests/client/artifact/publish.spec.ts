@@ -20,7 +20,8 @@ function platformOf(id: string): PublishPlatform {
 
 describe('平台注册表', () => {
   it('covers the platforms the reference product lists for articles and posts', () => {
-    // crebee.cn 明示的图文/文章档：公众号、知乎、头条号、百家号、小红书、微博。
+    // crebee.cn 明示的图文/文章档：公众号、知乎、头条号、百家号、小红书、微博；
+    // v2.06 追加国外四家：Medium、X、LinkedIn、Dev.to（排在六家国内平台之后）。
     expect(PUBLISH_PLATFORMS.map((platform) => platform.id)).toEqual([
       'wechat',
       'zhihu',
@@ -28,6 +29,10 @@ describe('平台注册表', () => {
       'baijiahao',
       'xiaohongshu',
       'weibo',
+      'medium',
+      'x',
+      'linkedin',
+      'devto',
     ])
   })
 
@@ -41,6 +46,8 @@ describe('平台注册表', () => {
   it('states a char budget only where the platform enforces one', () => {
     expect(platformOf('weibo').maxChars).toBe(2000)
     expect(platformOf('xiaohongshu').maxChars).toBe(1000)
+    expect(platformOf('x').maxChars).toBe(280)
+    expect(platformOf('linkedin').maxChars).toBe(3000)
     expect(platformOf('wechat').maxChars).toBeUndefined()
   })
 
@@ -170,16 +177,16 @@ describe('text 档（小红书 / 微博）', () => {
   })
 })
 
-describe('平台注册表：官网地址（v1.95 账号绑定的一跳）', () => {
-  it('每个平台都有 https 的官网 / 创作后台地址', () => {
-    // 绑定的第一步是「打开官网登录」——没有地址，那条路就断了。
+describe('平台注册表：发布文章页（v2.04 跳转发布的那一跳）', () => {
+  it('每个平台都有 https 的发布文章页地址', () => {
+    // 发布 = 复制后跳到那家平台的发布页粘贴——没有地址，那条路就断了。
     for (const platform of PUBLISH_PLATFORMS) {
-      expect(platform.siteUrl.startsWith('https://')).toBe(true)
+      expect(platform.publishUrl.startsWith('https://')).toBe(true)
     }
   })
 
-  it('地址各不相同：六个平台六条正路，不是抄一行的占位', () => {
-    const urls = PUBLISH_PLATFORMS.map((platform) => platform.siteUrl)
+  it('地址各不相同：六个平台六个发布页，不是抄一行的占位', () => {
+    const urls = PUBLISH_PLATFORMS.map((platform) => platform.publishUrl)
     expect(new Set(urls).size).toBe(urls.length)
   })
 })
