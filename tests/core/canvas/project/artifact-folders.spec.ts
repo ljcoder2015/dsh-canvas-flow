@@ -56,7 +56,8 @@ describe('目录名只有一份真源', () => {
   })
 
   it('目录名是英文小写（项目结构会被 git 与别的编辑器读到，不是界面文案）', () => {
-    for (const name of Object.values(ARTIFACT_FOLDERS)) expect(name).toMatch(/^[a-z]+$/)
+    // live2d 的目录跟着 kind id 走（`live2d/`），数字是它名字的一部分。
+    for (const name of Object.values(ARTIFACT_FOLDERS)) expect(name).toMatch(/^[a-z0-9]+$/)
   })
 
   it('老记录上的 kind 先折算：`site` / `webapp` / `html-deck` 都落 apps', () => {

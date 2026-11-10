@@ -737,6 +737,61 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
 
   ctx.tools.register(
     defineTool({
+      name: TOOL_NAMES.generateLive2d,
+      description:
+        '为某张 Live2D 卡片生成一个 live2d-lite 动画模型（贴图 + 参数化动作：呼吸/摇摆/倾头，循环播放）。' +
+        'prompt 描述要画一个什么形象；引用进来的图片会自动当贴图（不重新画图），也可以用 referenceCardId 点名另一张。' +
+        '生成后卡面即开始播放；要微调动作幅度或循环时长，直接用文件工具改那份 .live2d.json 的 motions 与 loop 字段。',
+      parameters: {
+        prompt: { type: 'string', description: '形象描述（要画一个什么样的角色/物件）', required: true },
+        cardId: { type: 'string', description: '目标 Live2D 卡片 id', required: true },
+        referenceCardId: {
+          type: 'string',
+          description: '用哪张卡的图片产物当贴图。省略则自动用引用进这张卡的第一张图片；画布上没连引用就先画一张再做成动画',
+        },
+      },
+      output: {
+        schema: {
+          type: 'object',
+          properties: {
+            ok: { type: 'boolean' },
+            path: { type: 'string' },
+            reason: { type: 'string' },
+            note: { type: 'string' },
+          },
+          additionalProperties: false,
+        },
+        render: (_args, value) => {
+          const result = value as { ok: boolean; path: string; reason: string; note: string }
+          if (!result.ok) return text(`Live2D 生成未完成：${result.reason}`)
+          return text(result.note === '' ? `已生成：${result.path}` : `已生成：${result.path}（${result.note}）`)
+        },
+      },
+      async execute(args, exec) {
+        const projectId = activeProject(exec)
+        const board = await deps.canvas.readBoard(projectId, exec.signal)
+        const cardId = String(args.cardId)
+        // 与生图同一条引用规则：连线就是「把这张图当材料」，这里兑现成贴图。
+        const reference = referenceFor(board.cards, board.sources, cardId, optionalText(args.referenceCardId))
+        const result = await deps.card.generateLive2d(
+          board.project,
+          cardId,
+          String(args.prompt),
+          reference.status === 'found' ? reference.file : undefined,
+          exec.signal,
+        )
+        return {
+          ok: result.ok,
+          path: result.path,
+          reason: result.reason,
+          note: referenceNote(reference) ?? '',
+        }
+      },
+    }),
+  )
+
+  ctx.tools.register(
+    defineTool({
       name: TOOL_NAMES.export,
       description:
         '把一张卡片产物导出为其它格式（html / pdf / pptx / png / svg / zip）。能否导出取决于卡片形态与部署是否提供导出能力，不可行时会返回具体原因。',

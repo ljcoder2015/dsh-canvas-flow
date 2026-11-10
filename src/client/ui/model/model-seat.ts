@@ -62,15 +62,20 @@ export interface SeatFacts {
 }
 
 /**
- * 这张卡的形态对应哪种媒体生成能力；不是媒体卡就是 `undefined`。
+ * 这张卡的形态对应哪种媒体生成能力；不是「有生成能力的卡」就是 `undefined`。
  *
- * 用 `MEDIA_CAPABILITIES` 做匹配而不是强转：kind id 与能力名在这三者上恰好是同一批
+ * 用 `MEDIA_CAPABILITIES` 做匹配而不是强转：媒体三态的 kind id 与能力名恰好是同一批
  * 字符串（`image` / `video` / `audio`），但「恰好」不该靠一句 `as` 维持——名单变了要
  * 报得出来（`tests/core/media/` 里有一条判据钉住 `MEDIA_CAPABILITIES` 与 kind 表的
  * `MEDIA_KINDS` 相等）。
+ *
+ * live2d 是第四种「有生成能力的卡」，但它**借生图那条能力**：贴图是它唯一的重活，
+ * 模型 JSON 本地写。所以它的席位列的是 seedream 那一族、写的是卡片记录上的
+ * `mediaModel`——与图片卡完全同一条落点，只是 kind id 不同。
  */
 export function mediaCapabilityOf(kind: string): MediaCapability | undefined {
   const id = resolveKindId(kind)
+  if (id === 'live2d') return 'image'
   return MEDIA_CAPABILITIES.find((capability) => capability === id)
 }
 

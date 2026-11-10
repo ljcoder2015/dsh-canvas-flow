@@ -124,6 +124,22 @@ function mediaPreset(kind: string, tool: string): string {
     .join(' ')
 }
 
+/**
+ * Live2D 卡的那句「产物是什么、怎么改」。
+ *
+ * 与媒体三态分家是刻意的：live2d 的产物是 **JSON 文本**，不是二进制——所以「别拿文件
+ * 工具写它」那条对它**不成立**，恰恰相反：微调动作的唯一正道就是编辑那份 JSON。但
+ * 「从无到有」的那条路是生成工具（它包着生图），两条各说各的。
+ *
+ * 单独抽成函数与 {@link DESIGN_PRESET} 同一个理由：它是这类卡共有的常识，且要进判据
+ * （`tests/host/prompt.spec.ts`）。
+ */
+const LIVE2D_PRESET = [
+  'The artifact of this card is a **live2d-lite model** (a `.live2d.json` file) plus a texture image it references (relative path in `texture`). The model animates the texture with parametric motion — breathing (`motions.breath`), sway (`motions.sway`), tilt (`motions.tilt`), each `{ cycles, amplitude, phase }` where `cycles` is whole cycles per loop (keep it an integer: that is what makes exports loop seamlessly) — over `loop` seconds.',
+  `To produce the whole thing, use \`${TOOL_NAMES.generateLive2d}\` with \`cardId\` set to **this card's id** (\`canvas_card_id\`): it paints the texture (or reuses an image referenced onto this card) and writes the model. To fine-tune the motion afterwards, edit the JSON with the ordinary file tools — the card re-reads it from disk.`,
+  'Never edit the texture image itself with text tools; to repaint it, generate a new image card and reference it, or rerun the generation tool.',
+].join(' ')
+
 /** 每种媒体形态配哪个生成工具。
  *
  * 从 {@link TOOL_NAMES} 取值而不是抄字符串：工具名那条单一真源在 `contract.ts`，
@@ -151,6 +167,9 @@ function artifactGuidance(kind: string, kindLabel: string, file: string, imageGe
   }
   if (kind === 'markdown') {
     return `- This is a **text** card (markdown): write the artifact with the ordinary file tools, and write it 图文并茂 — structure with headings, and where a figure says more than prose, embed an image with \`![caption](path)\`, using a path **relative to this file** (\`../images/cover.png\` when the document sits in \`docs/\`); a reference to a file that was never written renders as broken text, so the image exists before the reference does. ${markdownIllustration(imageGeneration)} If this session provides skill tools (installed skills), you may use them while composing the document — the artifact itself stays this markdown file.`
+  }
+  if (kind === 'live2d') {
+    return `- This is a **Live2D** card: the artifact is a live2d-lite model (\`${file}\`) that animates a texture image with parametric motion. ${LIVE2D_PRESET}`
   }
   const tool = MEDIA_TOOL[kind]
   if (tool !== undefined) {

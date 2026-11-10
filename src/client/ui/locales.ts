@@ -42,6 +42,7 @@ export const zh = {
   'canvas.dock.image': '图片',
   'canvas.dock.video': '视频',
   'canvas.dock.audio': '音频',
+  'canvas.dock.live2d': 'Live2D',
 
   // 引用线拖到空白处放手时弹出的「新增节点」（F4.8）
   'canvas.drop.title': '新增节点',
@@ -188,6 +189,43 @@ export const zh = {
   'canvas.viewer.save': '保存',
   'canvas.viewer.saved': '已保存',
   'canvas.viewer.dirty': '未保存',
+  // live2d 编辑器：全屏预览的「编辑」面——参数即产物，改动防抖写回 JSON
+  'canvas.live2d.loop': '循环时长',
+  'canvas.live2d.breath': '呼吸',
+  'canvas.live2d.sway': '摇摆',
+  'canvas.live2d.tilt': '倾头',
+  'canvas.live2d.amplitude': '幅度',
+  'canvas.live2d.cycles': '拍数',
+  'canvas.live2d.phase': '相位',
+  'canvas.live2d.anchor': '锚点',
+  'canvas.live2d.anchorHint': '点击画面移动锚点：离锚点越远的部位动得越多（人物贴图锚在脚底）。',
+  'canvas.live2d.resetAnchor': '复位锚点',
+  'canvas.live2d.modeParams': '参数',
+  'canvas.live2d.modeMesh': '网格',
+  'canvas.live2d.modeTimeline': '时间线',
+  'canvas.live2d.keyed': '关键帧',
+  'canvas.live2d.meshTitle': '网格雕刻',
+  'canvas.live2d.meshReset': '复位网格',
+  'canvas.live2d.meshHint': '拖动网格顶点给贴图定型（兜住耳朵、理顺衣角）；动过的顶点亮起蓝点，复位网格清掉全部。位移按顶点生效，不随动作幅度缩放。',
+  'canvas.live2d.meshCount': '已雕 {count} 个顶点',
+  'canvas.live2d.keysClear': '清除关键帧',
+  'canvas.live2d.keysCount': '{count} 枚键',
+  'canvas.live2d.keysSine': '正弦驱动',
+  'canvas.live2d.playhead': '播放头',
+  'canvas.live2d.play': '播放',
+  'canvas.live2d.pause': '暂停',
+  'canvas.live2d.scrubHint': '拖动标尺拖播放头定格到任意时刻（拖动即暂停）；网格模式自动冻结在当前帧，离开后继续播放。',
+  'canvas.live2d.timelineHint': '在轨道空白处点击开启关键帧（按正弦现状播两枚种子键）；拖动键改时刻与取值；双击键删除。曲线在循环两端环绕，永远无缝。',
+  'canvas.live2d.modeBones': '骨骼',
+  'canvas.live2d.bonesTitle': '骨骼',
+  'canvas.live2d.bonesHint': '点击画面空白处落关节（父级＝当前选中的那根）；拖动关节调位置；选中一根后可在下方时间线摆它的旋转关键帧。',
+  'canvas.live2d.bonesClear': '清除骨骼',
+  'canvas.live2d.bonesCount': '{count} 根骨骼',
+  'canvas.live2d.boneDelete': '删除骨骼',
+  'canvas.live2d.boneParent': '父级',
+  'canvas.live2d.boneNoParent': '（根）',
+  'canvas.live2d.boneChildHint': '删除这根骨骼时，它的子级会自动上提给它的父级。',
+  'canvas.live2d.boneTrackHint': '纵轴是旋转（中线为零、顶底 ±23°）；拖播放头定格检查，键的摆法与动作轨道一致。',
   // 发布（v1.93）：一键生成各内容平台吃得下的格式，复制后粘贴到对应编辑器
   'canvas.publish': '发布',
   'canvas.card.publish': '发布到内容平台',
@@ -257,6 +295,16 @@ export const zh = {
   // 应用节点的导出（F10.1）：没有格式可选，也没必要有——产物的「另一种形式」就是它自己
   // 装进一个压缩包。所以「导出」在这里是一击，不是菜单；四种 md/docx 那种分叉不适用。
   'canvas.export.bundleDone': '已导出 {name}（{count} 个文件）',
+  'canvas.export.live2dDone': '已导出 {name}（{count} 帧）',
+  // live2d 卡的两种烘法（v2.07）：雪碧图逐像素一致、骨架包可编辑，两条各给各的东西，
+  // 所以是一张菜单而不是一击。缺骨骼时那句话要指向下一步（去骨骼模式加关节），
+  // 而不是说「导出失败」——失败的是条件，不是操作。
+  'canvas.export.menuLive2d': '导出动画',
+  'canvas.export.live2dSheet': '帧序列雪碧图（PNG + JSON）',
+  'canvas.export.live2dBones': 'DragonBones 骨架（可编辑）',
+  'canvas.export.live2dBonesDone': '已导出 {name}（{bones} 根骨骼 / {count} 帧）',
+  'canvas.export.live2dBonesAbsent':
+    '这份模型还没有骨骼：骨架包的意义全在骨架，先到「骨骼」模式加几根关节（先父后子），再导出。',
   'canvas.export.bundleEmpty': '这个应用目录里没有可打包的文件。',
   'canvas.export.bundleTruncated': '应用目录太大，超出一次导出能可靠搬运的范围；照这样导出会缺文件，所以先不导。',
   'canvas.export.bundleFailed': '打包失败：{reason}',
@@ -407,6 +455,7 @@ export const en = {
   'canvas.dock.image': 'Image',
   'canvas.dock.video': 'Video',
   'canvas.dock.audio': 'Audio',
+  'canvas.dock.live2d': 'Live2D',
 
   // The "new node" popup a source-edge drag opens when it is let go on empty space (F4.8)
   'canvas.drop.title': 'New node',
@@ -552,6 +601,43 @@ export const en = {
   'canvas.viewer.save': 'Save',
   'canvas.viewer.saved': 'Saved',
   'canvas.viewer.dirty': 'Unsaved',
+  // Live2D editor: the fullscreen viewer's edit face — params are the artifact, edits write back
+  'canvas.live2d.loop': 'Loop',
+  'canvas.live2d.breath': 'Breath',
+  'canvas.live2d.sway': 'Sway',
+  'canvas.live2d.tilt': 'Tilt',
+  'canvas.live2d.amplitude': 'Range',
+  'canvas.live2d.cycles': 'Beats',
+  'canvas.live2d.phase': 'Phase',
+  'canvas.live2d.anchor': 'Anchor',
+  'canvas.live2d.anchorHint': 'Click the picture to move the anchor: parts farther from it move more (anchor a character at the feet).',
+  'canvas.live2d.resetAnchor': 'Reset anchor',
+  'canvas.live2d.modeParams': 'Params',
+  'canvas.live2d.modeMesh': 'Mesh',
+  'canvas.live2d.modeTimeline': 'Timeline',
+  'canvas.live2d.keyed': 'Keyed',
+  'canvas.live2d.meshTitle': 'Mesh sculpt',
+  'canvas.live2d.meshReset': 'Reset mesh',
+  'canvas.live2d.meshHint': 'Drag grid vertices to shape the texture (cup an ear, straighten a hem); sculpted vertices light up as blue dots, Reset clears them all. Offsets apply per vertex and do not scale with motion.',
+  'canvas.live2d.meshCount': '{count} vertices sculpted',
+  'canvas.live2d.keysClear': 'Clear keys',
+  'canvas.live2d.keysCount': '{count} keys',
+  'canvas.live2d.keysSine': 'Sine drive',
+  'canvas.live2d.playhead': 'Playhead',
+  'canvas.live2d.play': 'Play',
+  'canvas.live2d.pause': 'Pause',
+  'canvas.live2d.scrubHint': 'Drag the playhead along the ruler to freeze any instant (dragging pauses); Mesh mode freezes on the current frame and resumes when you leave.',
+  'canvas.live2d.timelineHint': 'Click empty track space to switch to keys (two seed keys follow the current sine shape); drag a key to move its time and value; double-click a key to delete. Curves wrap around the loop — always seamless.',
+  'canvas.live2d.modeBones': 'Bones',
+  'canvas.live2d.bonesTitle': 'Skeleton',
+  'canvas.live2d.bonesHint': 'Click empty picture space to drop a joint (parent = the selected one); drag joints to place them; select one to keyframe its rotation on the timeline below.',
+  'canvas.live2d.bonesClear': 'Clear bones',
+  'canvas.live2d.bonesCount': '{count} bones',
+  'canvas.live2d.boneDelete': 'Delete bone',
+  'canvas.live2d.boneParent': 'Parent',
+  'canvas.live2d.boneNoParent': '(root)',
+  'canvas.live2d.boneChildHint': 'Deleting this bone re-parents its children to its parent.',
+  'canvas.live2d.boneTrackHint': 'Vertical axis is rotation (zero line in the middle, ±23° at the edges); scrub to freeze and inspect — keys behave like motion tracks.',
   // Publishing (v1.93): one click produces each platform's format; paste it there
   'canvas.publish': 'Publish',
   'canvas.card.publish': 'Publish to content platforms',
@@ -625,6 +711,17 @@ export const en = {
   // the only other form its artifact takes is itself, packed into an archive. So
   // the button is a single click here rather than a menu.
   'canvas.export.bundleDone': 'Exported {name} ({count} files)',
+  'canvas.export.live2dDone': 'Exported {name} ({count} frames)',
+  // The live2d card has two ways to bake (v2.07): the sprite sheet is pixel-exact, the
+  // skeleton package is editable — each hands over something different, so it is a menu
+  // rather than a single click. When there is no rig, say which step comes next (add
+  // joints in bones mode) instead of calling it an export failure.
+  'canvas.export.menuLive2d': 'Export animation',
+  'canvas.export.live2dSheet': 'Frame sheet (PNG + JSON)',
+  'canvas.export.live2dBones': 'DragonBones skeleton (editable)',
+  'canvas.export.live2dBonesDone': 'Exported {name} ({bones} bones / {count} frames)',
+  'canvas.export.live2dBonesAbsent':
+    'This model has no bones yet: a skeleton package is all about the rig. Add a few joints in bones mode (parents first), then export.',
   'canvas.export.bundleEmpty': 'This application folder has no files to pack.',
   'canvas.export.bundleTruncated':
     'The application folder is too large to carry out in one export; packing it now would leave files behind, so nothing was exported.',

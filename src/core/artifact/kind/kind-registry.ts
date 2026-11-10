@@ -7,6 +7,7 @@
  * naming tests can call it without a Cordis container.
  */
 import type { ExportFormat, KindDefinition } from '../../../types.ts'
+import { LIVE2D_EXTENSION } from '../../live2d/model.ts'
 import { WEBAPP_MANIFEST } from './webapp.ts'
 
 /** Text and byte evidence gathered from the target before classification. */
@@ -85,6 +86,20 @@ export const BUILTIN_KINDS: readonly KindDefinition[] = [
     id: 'audio',
     label: '音频',
     addressPatterns: ['dsh-resource://file/**/*.mp3', 'dsh-resource://file/**/*.wav'],
+    directory: false,
+    exportFormats: [],
+    publishable: false,
+  },
+  {
+    // Live2D 动画卡：产物是一份 live2d-lite 模型（`.live2d.json`），描述一张贴图怎么
+    // 参数化地动（呼吸 / 摇摆 / 倾头）。它**不是**媒体（产物是 JSON 文本，卡面画的是
+    // 贴图 + 变形网格，不是字节本身），所以不进 `MEDIA_KINDS`——它自己的判据是
+    // {@link isLive2dKind}，需要知道它的每一处（导出、席位、生成提示词）都读那一根
+    // 指针，而不是手写 `'live2d'`。它排在 `data` 前面：`.live2d.json` 同时命中两条
+    // 地址模式（`**/*.live2d.json` 与 `**/*.json`），谁先注册谁认领。
+    id: 'live2d',
+    label: 'Live2D',
+    addressPatterns: ['dsh-resource://file/**/*.live2d.json'],
     directory: false,
     exportFormats: [],
     publishable: false,
@@ -268,6 +283,21 @@ export function isMediaKind(kind: string): boolean {
 }
 
 /**
+ * Live2D 卡的形态指针：**live2d-lite 模型**（一张 `.live2d.json` + 一张贴图）。
+ *
+ * 与上面几根指针同一条道理，但它不进 `MEDIA_KINDS` 是刻意的：产物是 **JSON 文本**，
+ * 字节通道、原样下载、导入上限那三条媒体路对它都不成立；它自己的生成路
+ * （`canvas_generate_live2d`）与导出路（帧序列雪碧图）各是一根。判据只有这一份——
+ * 写第二次的地方迟早漏改一次。
+ */
+export const LIVE2D_KINDS: readonly string[] = ['live2d']
+
+/** Whether a kind is a live2d-lite model card (see {@link LIVE2D_KINDS}). */
+export function isLive2dKind(kind: string): boolean {
+  return LIVE2D_KINDS.includes(resolveKindId(kind))
+}
+
+/**
  * True for a directory that behaves as an app: it carries an entry page or the
  * scaffold manifest. The manifest alone separates a scaffolded folder from a
  * hand-made one, but both preview and name identically, so one verdict serves.
@@ -294,6 +324,9 @@ export function detectKind(probe: KindProbe, definitions: readonly KindDefinitio
   if (extension === 'html' || extension === 'htm') return 'app'
   if (extension === 'md' || extension === 'mdx') return 'markdown'
   if (extension === 'design') return 'design'
+  // live2d-lite 的双扩展名必须在 `json` → data 之前判：按裸扩展名它就是 json，
+  // 而「一份模型被当成图表读」不报错，只是预览里躺着一串 JSON。
+  if (probe.basename.endsWith(LIVE2D_EXTENSION)) return 'live2d'
   if (['png', 'jpg', 'jpeg', 'webp', 'gif', 'svg', 'avif'].includes(extension)) return 'image'
   if (['mp4', 'mov', 'webm', 'm4v'].includes(extension)) return 'video'
   if (['mp3', 'wav', 'm4a', 'aac', 'ogg', 'flac', 'opus', 'wma'].includes(extension)) return 'audio'
@@ -345,6 +378,25 @@ export function outlineOf(kind: string, text: string, limit = 24): string[] {
         .map((cell) => cell.trim())
         .filter((cell) => cell !== '')
         .slice(0, limit)
+    }
+    case 'live2d': {
+      // 一份模型的结构就是「贴图是谁、循环多长、有哪些动作」——三样都是短词，
+      // 大纲行正好说得下。解析失败（半截 JSON）就什么都别说，别猜。
+      try {
+        const parsed = JSON.parse(text) as Record<string, unknown>
+        const found: string[] = []
+        if (typeof parsed.texture === 'string' && parsed.texture.trim() !== '') found.push(`贴图 ${parsed.texture}`)
+        if (typeof parsed.loop === 'number' && Number.isFinite(parsed.loop)) found.push(`循环 ${parsed.loop}s`)
+        const motions = parsed.motions
+        if (typeof motions === 'object' && motions !== null) {
+          for (const [name, entry] of Object.entries(motions as Record<string, unknown>)) {
+            if (typeof entry === 'object' && entry !== null) found.push(name)
+          }
+        }
+        return found.slice(0, limit)
+      } catch {
+        return []
+      }
     }
     default:
       return []

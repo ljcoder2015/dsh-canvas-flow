@@ -74,6 +74,15 @@ import {
   normalizeMediaParams,
 } from '../../core/media/editing.ts'
 import { siblingPathOf } from '../../core/canvas/card/sibling-path.ts'
+import {
+  DEFAULT_LOOP_SECONDS,
+  DEFAULT_MOTIONS,
+  LIVE2D_FORMAT,
+  LIVE2D_VERSION,
+  defaultTexturePathOf,
+  serializeLive2dModel,
+  textureReferenceOf,
+} from '../../core/live2d/model.ts'
 import { artifactFolderPathOf, artifactPathOf } from '../../core/canvas/project/artifact-folders.ts'
 import { materialUpstreams } from '../../core/canvas/board/source-store.ts'
 import type { BoardFile } from './board-file.ts'
@@ -1605,6 +1614,52 @@ export class CardRuntime extends TypertRemoteService {
     return this.runGeneration(project, cardId, signal, (file, model) =>
       generate({ project, file, ...options, ...(model === undefined ? {} : { model }) }, signal),
     )
+  }
+
+  /**
+   * Generate a live2d-lite model artifact for one card (`canvas_generate_live2d`).
+   *
+   * 这张卡的产物是**一份 JSON**，但它不是「从文本生成的文本」——它包着一张贴图。贴图
+   * 两个来源，二选一：
+   *
+   * - **引用进来的上游图片直接用**（引用即数据，不复制）：画布上连的那条边说「这张图是
+   *   材料」，模型文件里就以相对引用指向它。上游换了图（重新生成），这张卡下一次渲染
+   *   读到的是新图——引用的语义照旧成立。
+   * - **没有引用就走生图路线现画一张**，落在模型同目录、同词干的 `.png` 上
+   *   （`defaultTexturePathOf`）：整张卡连图带模型搬一次目录就搬全了。
+   *
+   * 走 `runGeneration` 而不是自己拼：产物落盘后的形态重读、失败变 `reason`、卡片选定
+   * 的生成模型传下去——这三件事是「一次生成落进一张卡」的全部内容，写第二遍就是第二份
+   * 会漂移的实现。
+   */
+  async generateLive2d(
+    project: Project,
+    cardId: CardId,
+    prompt: string,
+    referencePath: string | undefined,
+    signal?: AbortSignal,
+  ): Promise<GenerationResult> {
+    return this.runGeneration(project, cardId, signal, async (file, model) => {
+      const texturePath = referencePath ?? defaultTexturePathOf(file)
+      if (referencePath === undefined) {
+        const generate = this.deps.capabilities?.generateImage
+        if (generate === undefined) throw new Error(UNSUPPORTED_IMAGE)
+        await generate({ project, file: texturePath, prompt, ...(model === undefined ? {} : { model }) }, signal)
+      }
+      const artifact = serializeLive2dModel({
+        format: LIVE2D_FORMAT,
+        version: LIVE2D_VERSION,
+        texture: textureReferenceOf(file, texturePath),
+        loop: DEFAULT_LOOP_SECONDS,
+        anchor: { x: 0.5, y: 1 },
+        breath: { ...DEFAULT_MOTIONS.breath },
+        sway: { ...DEFAULT_MOTIONS.sway },
+        tilt: { ...DEFAULT_MOTIONS.tilt },
+        prompt,
+      })
+      await this.deps.io.write(project.root, file, artifact, undefined, signal)
+      return { path: texturePath }
+    })
   }
 
   /**

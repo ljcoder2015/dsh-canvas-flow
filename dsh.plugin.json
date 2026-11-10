@@ -22,6 +22,7 @@
       "canvas_generate_image",
       "canvas_generate_video",
       "canvas_generate_audio",
+      "canvas_generate_live2d",
       "canvas_design_read",
       "canvas_design_edit",
       "canvas_export",

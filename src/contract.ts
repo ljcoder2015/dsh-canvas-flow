@@ -56,6 +56,7 @@ export const TOOL_NAMES = {
   generateImage: 'canvas_generate_image',
   generateVideo: 'canvas_generate_video',
   generateAudio: 'canvas_generate_audio',
+  generateLive2d: 'canvas_generate_live2d',
   designRead: 'canvas_design_read',
   designEdit: 'canvas_design_edit',
   export: 'canvas_export',
