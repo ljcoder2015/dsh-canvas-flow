@@ -1,9 +1,9 @@
 # DeepSeek Harness 通用创作画布插件 · 技术文档
 
-**版本**：v1.85  
-**最近更新**：2026-10-22  
+**版本**：v2.07  
+**最近更新**：2026-11-10  
 **状态**：技术架构已按 [`dsh-plugin-template`](https://github.com/bugmaker2/dsh-plugin-template) 与 DeepSeek Harness 子系统文档（`docs/cookbook/*`、`docs/subsystems/*`）校准，并在真机跑通  
-**产品文档**：[`DeepSeek-Harness-Canvas-产品文档.md`](./DeepSeek-Harness-Canvas-产品文档.md)——功能点清单（F1.1–F10.4）、MVP 范围、设计决策记录、修订记录都在那边  
+**产品文档**：[`DeepSeek-Harness-Canvas-产品文档.md`](./DeepSeek-Harness-Canvas-产品文档.md)——功能点清单（F1.1–F10.5）、MVP 范围、设计决策记录、修订记录都在那边  
 **定位**：这个双端插件的完整技术设计。底座的形态约束、源码分层、跨端契约、Host 与 Client 两侧的职责边界、数据落点、构建与安装，各占一章
 
 ## 阅读约定
@@ -640,6 +640,18 @@ doubao-audio:
 
 **八处变异逐条验红**：删掉「撞自己算替换」⇒ 2 红；上限写成 `>=` ⇒ 边界红；`folder` 不跟随卡片目录 ⇒ 2 红；字节之后又走一次 `io.write` ⇒ 2 红；删 `delete next.aspect` ⇒ 1 红；去掉 `canImport` ⇒ 1 红；不清 `value` + 手写 `accept` ⇒ 2 红；被拒也 `setStamp` ⇒ 1 红。
 
+### live2d：产物是一份模型，生成只是写一份 JSON（F2.8，v2.05）
+
+动画卡（`live2d`）与媒体三兄弟**形状像、通道全不一样**，所以它从第一天就不在 `MEDIA_KINDS` 里：
+
+- **产物是文本**：`.live2d.json` 描述「贴图是谁、循环多长、几组动作、网格怎么雕、骨骼怎么转」，读写走 `readArtifact` / `writeText` 那条文本路。媒体那三条路对它一条都不成立——按扩展名取 MIME（`MEDIA_MIME`）没有它的条目、原样下载等于交出去一串引擎读不懂的模型、16MB 导入上限也管不着它。所以判据只有一根指针：`LIVE2D_KINDS` / `isLive2dKind`（`kind-registry.ts`），导出、席位、生成提示词三处都读它，不手写 `'live2d'`。
+- **双扩展名要在 `data` 前面判**：`detectKind` 里 `basename.endsWith('.live2d.json')` 那一行必须排在「`json` → data」之前。两条地址模式（`**/*.live2d.json` 与 `**/*.json`）同时命中，谁先注册谁认领；而错的那一种**不报错**，只是预览里躺着一串 JSON。
+- **工具数 18 → 19**：`canvas_generate_live2d` 与媒体三个生成工具同一条纪律——名字从 `TOOL_NAMES` 取，工具注册 / 提示词段落 / 清单申报三处同源（`tests/contract.spec.ts` 与 `tools.spec.ts` 钉这一条）。
+- **模型只有一份归一入口**（`core/live2d/model.ts` 的 `normalizeLive2dModel`）：键按 `t` 升序、重位键收敛、`MAX_KEYS = 64`、雕刻偏移夹在 `DEFORM_MAX = 0.15`、骨骼 `parent` 只许指向数组里**更早**的那一根（先父后子，一遍线性扫就够，也天然无环）、骨骼轨道按**已收下的骨骼清单**筛、雕刻表按键名排序。
+- **序列化必须稳定**（`serializeLive2dModel`）：同一份模型两次写出来逐字节相同。这不是洁癖——「内容没变就不写」「按字节判缓存」这两条都建在它上面，而它们一旦松动，症状是「保存了但没生效」那种最难查的一类。
+- **贴图是相对引用**：模型文件在 `live2d/名字.live2d.json`，`texture` 默认写裸文件名（同目录的 `名字.png`——模型与图一起搬目录不断链）；引用进来的上游图仍在 `images/` 时写项目根相对的 `/images/…`。`texturePathOf` 解相对路径、`textureReferenceOf` 反向拼（层数用尽就退回根相对）。
+- **生成侧引导**（`host/prompt.ts` 的 `artifactGuidance('live2d')`）：产物不是文本文章、别拿文件工具去写；贴图从**引用进来的那张图**来，写相对路径；动作先用正弦节律（`cycles` / `amplitude` / `phase`），要非周期的手感再用关键帧。
+
 ### 文本节点的图文：渲染器换写 + 工作区图片路由 + 生成侧引导（v1.92）
 
 三条链路，各归各层：
@@ -660,15 +672,15 @@ v1 是「**一键生成多平台适配格式**」而不是真实发布——真�
 
 **①适配器（`client/artifact/publish/platforms.ts`，纯）**。注册表一份：`PUBLISH_PLATFORMS`（id / 名称 / 格式 / 用法提示 / 字数上限），查 `platformOf(id)`。convert 三条路：**内联 HTML**（公众号 / 头条号 / 百家号）——`renderMarkdown` 渲染后把**每个 class 映射成内联 style**（平台编辑器不吃外部 CSS，标签上没样式贴过去就是素文本）；`HTML_STYLES` 的键与渲染器产出的 class 一一对应（六个带 class 的形态 + 九个无 class 的行内标签），**渲染器加 class / 改标签时这张表要跟着对**，`publish.spec.ts` 会数。**markdown 原样**（知乎，它原生支持）。**剥语法纯文本**（小红书 / 微博）——图片引用变〔配图：说明〕，附字数与上限。图片内联钩子两件：`collectImageUrls`（收 markdown 里的相对 / 工作区 URL）与 convert 的 `imageMap`（生成面板先把图 fetch 成 dataURI 再喂进来——公众号对外域图片有防盗链，内联最稳）。
 
-**②发布页（`client/artifact/publish/publish-page.tsx`，v1.95 从浮层面板改来）**。**独立页面，铺满画布这个 tab**（`.dsh-canvas-publish-page`，`position:absolute;inset:0` 挂在 `.dsh-canvas-root` 下）——发布是一件「离开画布去干活」的事，440px 的浮层塞不下编辑器。左栏平台按钮（各带已绑定账号数）、右栏编辑器（**预览 / 源文**两档：预览按当前平台渲染适配结果，源文改 markdown 原文——原文是六个平台适配的共同来源）、顶部导航（返回 / 文件名 / 当前平台账号选择器 / 账号管理 / 复制 / 下载）。**账号管理**是满屏一层：一平台可绑**多个账号**（账号池按 id 索引）。绑定是**真实绑定**（v1.97）：每平台一枚「绑定账号」，点下去宿主走 `registerPublishBindRoute`（`host/publish-bind.ts`）拉起这台机器上的 Chrome / Edge / Chromium / Brave（独立 user-data-dir 放 tmp，随机调试端口，`DSH_CANVAS_BROWSER` 可钦定），打开平台登录页（目标表与 **Cookie 域白名单**都在 `core/publish/bind.ts`——请求里永远不收域名或 URL，这条路由有读登录态的能力）；客户端每 2.5 秒 `check` 一次，宿主连 CDP（`/json/list` 找页面 target，原生 `WebSocket` 发 `Network.getAllCookies`，零新依赖——Node 22 自带）按白名单域过滤、按「域更具体者优先」序列化成 `Cookie:` 头交回，检测到即 `bindAccount` 落表并选中；约四分钟轮询上限，超时明说。v1.96 的本机生成虚拟令牌已拆。要换凭证 / 找不到浏览器的机器走既有「编辑」入口手动粘贴。Esc 逐层退：先关账号管理、再回画布（`capture: true` 接在 window 上，别让画布同时收到）。剪贴板 / 下载与 v1.93 同一条纪律：HTML 档 `ClipboardItem` 双 mime、复制时图片取 dataURI 内联（预览只用工作区 URL，不必等字节）。
+**②发布页（`client/artifact/publish/publish-page.tsx`，v1.95 从浮层面板改来）**。**独立页面，铺满画布这个 tab**（`.dsh-canvas-publish-page`，`position:absolute;inset:0` 挂在 `.dsh-canvas-root` 下）——发布是一件「离开画布去干活」的事，440px 的浮层塞不下编辑器。左栏平台按钮、右栏编辑器（**预览 / 源文**两档：预览按当前平台的读者版式渲染，源文改 markdown 原文——原文是六个平台适配的共同来源）、顶部导航（返回 / 文件名 / 复制 / 下载〔html 档〕/ **前往平台发布**）。**发布由用户自己完成（v2.04）**：点「前往平台发布」打开 `platform.publishUrl`——那家平台的**发布文章页**（公众号新建图文 / 知乎专栏写作页 `zhuanlan.zhihu.com/write` / 头条号图文发布 / 百家号编辑器 / 小红书发布页 / 微博发博框），复制的事用户自己做，工具条常驻一句「复制正文后，到平台的发布页粘贴发布」；未登录时平台自己先跳登录页，不需要额外的登录入口。**账号那一套（v1.96–v1.99 的账号池 / 浏览器登录抓 Cookie / 宿主带 Cookie 投递）按用户要求整体拆除**：绑定要真凭证、投递踩在平台内部接口上，平台一收紧校验就断——`accounts.ts`、`real-bind.ts`、`host/publish-bind.ts`、`host/publish-deliver.ts`、`core/publish/bind.ts`、`core/publish/upstream.ts` 六份文件与两条宿主路由全下线，`siteUrl` 字段被 `publishUrl` 取代。Esc 关页面（`capture: true` 接在 window 上，别让画布同时收到）。剪贴板 / 下载纪律不变：HTML 档 `ClipboardItem` 双 mime、复制时图片取 dataURI 内联（预览只用工作区 URL，不必等字节）。
 
-**③入口与接线**。发布页的归属是**画布**（`canvas-view.tsx` 的 `publishing: { cardId }` 状态渲染 `PublishPage`），弹窗无权自己渲染一层全屏。两个入口都只交「去发布」这件事：卡面（`card-tile.tsx`）文本卡 hover 出「发布」小钮（`pointerdown` 自己吃掉防拖拽冲突）→ 直接 `setPublishing`；预览头部「发布」钮经 `ArtifactChrome.openPublish()`（v1.95 取代 v1.93 的 `openInPublish` 布尔——页面没有「初始状态」可言，只有回调）→ 关弹窗、开页面。样式令牌纪律不变：**强调色底上的文字必须用配对令牌**，写死 `color:#fff` 会被主题令牌判据红（v1.93 实际红过两处）；编辑纸（`.dsh-canvas-publish-sheet`）的白底是**文档预览**语义，刻意不用令牌。
+**③入口与接线**。发布页的归属是**画布**（`canvas-view.tsx` 的 `publishing: { cardId }` 状态渲染 `PublishPage`），弹窗无权自己渲染一层全屏。两个入口都只交「去发布」这件事：卡面（`card-tile.tsx`）文本卡 hover 出「发布」小钮（`pointerdown` 自己吃掉防拖拽冲突）→ 直接 `setPublishing`；预览头部「发布」钮经 `ArtifactChrome.openPublish()`（v1.95 取代 v1.93 的 `openInPublish` 布尔——页面没有「初始状态」可言，只有回调）→ 关弹窗、开页面。样式令牌纪律不变：**强调色底上的文字必须用配对令牌**，写死 `color:#fff` 会被主题令牌判据红（v1.93 实际红过两处）；阅读纸（v2.00 起 `.dsh-canvas-publish-read`，取代 v1.95 的 `publish-sheet`）的白底是**文档预览**语义，刻意不用令牌。
 
-判据：`tests/client/artifact/publish.spec.ts`（注册表 / 三条转换 / 图片收集与替换 / 字数上限 / 官网地址各不相同且全是 https）、`publish-accounts.spec.ts`（账号池 / 坏形状容错 / v1 旧键读时迁移 / 掩码 / `bindAccount`：真凭证原样入表、序号顺延、空凭证拒绝）、`tests/core/publish/bind.spec.ts`（路由前缀形状 / 目标表覆盖注册表每个平台 / 白名单域匹配——子域命中而「后缀像」不许命中 / 同名 Cookie 父子域并存时保留域更具体的一枚）、`tests/core/publish/upstream.spec.ts`（投递路由形状 / 通道表 id 唯一且实现收敛 / 三平台有通道其余诚实为无 / Cookie 取值——URL 解码、坏编码不抛、前缀像不行 / 公众号 token 挖掘——两种真形状、按序认第一处、挖不到交空串）。
+**读者版式（v2.00）**。预览对的是「**读者在那家平台上看到的那一版**」，不是「粘进编辑器的内联样式版」——html 档的产物是给平台编辑器吃的，摆出来只是把我们自己的排版意图再念一遍；读者看到的是平台用自己的样式重排的那一版。于是每个平台带一条**版式数据** `PublishPlatform.reader`（宽度 / device / 字体栈 / 字号 / 行高 / 段距 / 正文色 / 标题色 / 链接色 / 引用三色 / 代码底 / 插图圆角；放在平台定义里是刻意的——新增平台时 TS 就要求给出它，不会出现「新平台偷偷用别人家字号」的两个来源），`readerVars()` 把它铸成一组 `--rd-*` CSS 变量挂在**舞台**上（`.dsh-canvas-publish-stage`），正文纸继承——**换平台＝换一层变量，正文规则只有一份**。预览 HTML 走渲染器的语义标签（`renderMarkdown`，刻意不用 `adapted`，判据钉住这条接线）；纯文本档按空行切段（逐字 `<pre>` 不像任何平台的正文）。`--rd-*` 名字写错不会报错、只会静默回落兜底值，所以判据**双向对齐**：样式表用到的每个名字都要被 `readerVars` 产出来、产出来的每个都要被用上。样张探针在 `.workbuddy/repro/publish-preview/`（真实 styles.ts + 版式数据 + Chrome headless 截图）。
 
-**账号数据层（`publish/accounts.ts`，纯，`Storage` 参数注入）**。**存浏览器 localStorage**（`dsh-canvas.publish.accounts.v2`，一平台多账号；v1 的「一平台一条」在读取时迁移——每条补一个 `<平台>-<时间>` 的 id，v1 键只读不写），刻意不进宿主存储域——凭证是设备本地的敏感数据，`~/.dsh` 会被备份同步，产物目录可能被分享。读入的每一份都不可信：坏 JSON / 非数组 / 字段残缺 / 未知平台 / 同 id 重复，一律当作没绑过（不抛、不卡页面）；写入口管 id 唯一（同毫秒连加顺延 `-2`）、trim、空白凭证拒绝（「清空凭证」不是可表达的动作，要清就解绑）。界面永不回显凭证原文：编辑走 password 框，列表行 `maskCredential`（长的露头尾各 4 位，短的整串打点）。**真实绑定**（v1.97）走 `bindAccount(accounts, platformId, credential, now)`：真凭证原样入表、账号名按「账号N」顺延、未知平台与空凭证原表回，内部复用 `addAccount`（id 铸造与顺延逻辑不抄第二份）。
+**笔记形态（v2.03）**。版式只解决「字怎么排」，解决不了「**结构**怎么摆」：小红书这类信息流笔记，读者第一眼是**一张封面图**，然后才是标题、作者、正文——这排不出来，只能换一种摆法。于是 `reader` 上多了 `layout: 'note' | 'article'`（同样 TS 强制每个平台给值），发布页按它分流。拆页交给 `noteOf(source)`（纯函数）：标题只认**正文第一行**的标题（文中的小节标题不许冒充笔记标题）、独立成行的图片全部归封面（按出现顺序，多图横滑吸附滚动 + 右上角 N 张图）、其余按纯文本剥语法——**拆页与复制产物同源**（`plainLines` 一份，正文里看到的字就是复制出去的字），预览里看到的字、复制出去的字不许是两套。封面按图自身比例铺满正文宽（宽图不硬裁 3:4，裁掉的是内容），只受 440px 高度上限；纸本身不吃 `--rd-pad`（`.dsh-canvas-publish-read.dsh-canvas-publish-note` 覆写 padding），封面才能贴到纸边。作者一行取当前选中账号，没绑账号整行不出现。
 
-**一键发布（`host/publish-deliver.ts`，v1.99）**。绑定的真 Cookie 开始干活：`POST /dsh-canvas/publish-deliver/`（路由常量与通道表 `PUBLISH_UPSTREAMS` 都在 `core/publish/upstream.ts`——**平台接口地址只由宿主按 id 查表，cookie 只在宿主内存流动、不落日志**）。body 是 `DeliverPayload`（platformId / credential / title / html / text），有界流式读（8MB 上限，`req` 在 webServer 侧就是一条可异步迭代的 Node 流，open-in-app 同款）。三个上游：**微博** `ajax/statuses/update` 表单正文 + `x-xsrf-token`（从 Cookie 的 `XSRF-TOKEN` 解回来）；**知乎** 建草稿 → 写内容 → 发布三步（csrf 取 `XSRF-TOKEN`、`d_c0` 兜底），任何一步非 2xx 带平台原话报错；**公众号** 先 GET 后台首页从 HTML 挖 CSRF token（`weixinTokenFromHtml`，挖不到＝登录态失效明说重绑），再 `appmsg?action=add_ex` 写**草稿箱**——「发表」是平台强制的最后一步，结果里明说不冒充已发布。头条号 / 百家号 / 小红书没有通道（接口要签名或资质），客户端按 `upstreamOf` 隐藏发布按钮。失败是发布的常规结果之一：宿主一律 200 + `{ok:false, message}`（唯一 500 是 body 读不动）。
+判据：`tests/client/artifact/publish.spec.ts`（注册表 / 三条转换 / 图片收集与替换 / 字数上限 / **发布文章页**地址——六家互不相同且全 https）、`publish-reader.spec.ts`（六平台版式卫生 / 手机窄桌面宽两档不许各写各的 / 链接色两两不同 / `readerVars` 的 px 与纯数字形状 / `--rd-*` 与样式表双向对齐 / 预览不许退回 `adapted` 的接线断言 / 笔记形态：小红书是 note 其余 article、`noteOf` 拆页四则、封面在文前的接线断言）。账号池 / Cookie 白名单 / 投递通道三组判据随 v2.04 拆除一并退场。
 
 ## 六、数据模型与持久化
 
@@ -818,6 +830,8 @@ interface KindEntry {
 | ------------ | -------------------------------------------------- | ------------------------------------------- |
 | Host 认定      | `src/core/artifact/kind/kind-registry.ts` + `ctx.fs`    | 由扩展名与内容证据判定 `kind`，结果写进 domain 的 `cards` 记录。图片 / 视频 / 音频三个媒体 kind（v1.70）同样由**文件证据**认定，不由用户声明——`MEDIA_KINDS` 与 `isMediaKind()` 是三方（kind 表、IO 层、客户端）共读的那一根指针 |
 | Client 认领与预览 | **右栏 tab 类型注册表** `ctx.sidebarRightTabs.register()` | 按资源地址 glob 认领，用 `priority` 分档压过内置查看器        |
+
+**动画卡（v2.05）也走这两半，但它是一次「形态 ≠ 字节」的边界案例**：`live2d` 的产物是文本（一份模型 JSON），所以它既不在 `MEDIA_KINDS` 里、也不归导入与媒体导出那几条路管；它的形态判定必须排在 `data` 之前（`.live2d.json` 同时命中 `**/*.json`），指针是 `LIVE2D_KINDS` / `isLive2dKind`。详见 §五「live2d：产物是一份模型」。
 
 ```typescript
 // src/client/canvas/board/canvas-tab.ts —— 一种形态 = 一个 tab 类型
@@ -1117,6 +1131,33 @@ HTML 家族的预览是一个 `sandbox="allow-scripts"`、**不给** `allow-same
 
 **已知取舍**：只读层盖住整块视口，所以**页面自己的内层滚动容器在 `aim` 里滚不动**（滚轮到达的是只读层，默认动作只滚文档本身）；文档级滚动在 `aim` 里不受影响，在 `hold` 里连它也没有。验收判据在 `.workbuddy/e2e/element-pick.js`：所有「页面有没有动」都取自**页面自己的痕迹**（它自己的 `:hover` 计算色、它自己与委托两级的处理器计数器、`document.activeElement`、选区、滚动位置），并在开模式之前先跑一遍对照（证明这一页本来是活的）；判据一律判**增量**，不判「绝对值为零」。而「圈有没有被挪动」判的是**两个现量的差**：高亮框的视口矩形 vs 帧此刻的矩形加上元素此刻在帧里的位置（`framePoint` 一次量齐），再加一条「帧矩形一寸没变」；E2E 里 ⑦.2 那一组还会从外面往条带插槽里**塞一条 40px 的横条**再撤走——验的是「帧一旦挪窝，圈与框都跟着」这条**不变量**，而不是某一条特定提示。（修复前对照：这三条全红，帧 `top 51 → 94`。）
 
+### live2d 编辑器：一个舞台、两种状态、四张编辑镜（F2.8，v2.05–v2.07）
+
+**看的那一半只有一处算术。** `live2d-stage.ts` 是 WebGL1 的最小舞台：一张贴图 + 24×24 网格 + 三角索引，每帧把 `poseGridAt` 算出的顶点位置写进 attribute buffer。`use-live2d.tsx` 是它的 React 壳（`requestAnimationFrame` 里推进 `clockRef`），**卡面（`live2d-face.tsx`）与全屏共用同一个 hook**——所以「卡上看到的」与「点开看到的」不可能不一样。
+
+**编辑与预览是同一个弹窗的两个状态**（`live2d-viewer.tsx` → `live2d-editor.tsx`），不是两个页面：切换模式时舞台不重建、贴图不重取、播放时间不重置。
+
+**四张编辑镜，各有一份纯模块**（都不碰 React，node 判据直接跑）：
+
+| 模式 | 纯模块 | 认什么 |
+| --- | --- | --- |
+| `params` | `live2d-editor-layout.ts` | 贴合盒（`containLayout`，与舞台的 contain 同一句算术）、画面点 → 锚点（`anchorFromPoint`） |
+| `mesh` | `live2d-mesh.ts` | 顶点拾取半径（8px）、拖拽的 UV 换算、偏移写回稀疏表（键是 `col,row`） |
+| `timeline` | `live2d-timeline.ts` | 标尺高度、轨道的矩形、`xToTime` / `yToValue`、播放头命中 |
+| `bones` | `live2d-bones.ts` | 关节拾取（14px，比网格顶点宽——关节稀疏，点中就该抓住）、`boneUVFromPoint`、`nextBoneName`（取最小空号）、骨架叠层 |
+
+**冻结规则按模式给，不按开关给**：雕刻一律把时间冻住（在动的角色上雕不出你要的形状）、时间线按当前播放 / 暂停、参数与骨骼常放（后者的叠层永远画 **rest 姿态**——绑骨是在静止的角色上做的，动画里的实时姿态交给左边的舞台）。
+
+**写盘三件套**（v2.06 那次「保存后不生效」的结论，三处都在读侧）：
+
+1. **防抖 600ms 自动写** + **卸载时冲刷**：只做前者，最后一次改动会在切走时丢；
+2. **写完 `readArtifact` 再 `adopt`**：弹窗那份 view 不重读，盘上是新的、屏幕上是旧的；
+3. **缓存按 `(projectId, cardId)` 前缀失效**（`invalidateLive2dModel`）：缓存键从前只含字节，等长改动（改一个数值）不失效——这是「保存成功、看着没变」最隐蔽的一种。
+
+**动作与骨骼的曲线是同一扇门**：`curve.ts` 的 `sampleKeys`（余弦插值 + 尾键环绕首键）既服务三组动作的关键帧，也服务骨骼的旋转轨道；`motionValueAt` 是分岔点——有键走键、无键走正弦（整周期收尾，循环处不跳）。`curve.ts` 存在的原因是循环依赖：`rig.ts` 要算骨骼、`bones.ts` 要用曲线，把曲线抽出来两边都只往下依赖。`rig.ts` 仍然**再导出**那几个名字（`sampleKeys` / `motionValueAt`），所以原有消费方一行都不用改。
+
+**骨骼层的算术收在 `core/live2d/bones.ts`**：`bonePosesAt`（父动子随：子原点 = 父世界原点 + R(父角)·(rest 差)，子角 = 父角 + 自己）、`boneWeightsAt`（距离平方反比取最近两根再归一）、`skinAt`（线性混合蒙皮）。`rig.ts` 里那张「蒙皮 → 三组动作 → 雕刻」的次序**只在 `poseGridAt` 写一遍**，`poseAt` 是单点的同一套（它没有顶点序号，所以雕刻表管不到它——这是单点形态的既定边界，不是遗漏）。
+
 ## 九、文件读写与编辑回流
 
 一切文件访问走宿主的文件系统 seam `ctx.fs`（远程/沙箱工作区同样适用），不直接用 `node:fs`：
@@ -1409,6 +1450,29 @@ v1.66 上线的当天就撞回一句同族的真机反馈：「设计卡片导�
 
 **变异七处，逐条验红**：删掉 `isMediaKind` 那一支 ⇒ 分派 2 条红；只看空 `dataUrl`、不看 `truncated` ⇒ 行为 1 条 + 源码 1 条红；下载名改用产物词干 ⇒ 3 条红；`downloadBytes` 去掉 `ready` 条件 ⇒ 接线 1 条红；`atob` 之后不填字节 ⇒ 字节比对 1 条红；`truncated` 的口气改成 `ok` ⇒ 1 条红；扩展名转小写 ⇒ 1 条红。其中**第二条第一次只红了一条源码判据**——夹具当时把 `truncated: true` 与空 `dataUrl` 写在了一起，两件事互为掩护；把夹具改成「举旗但字节还在」之后同一变异精确命中行为那条。
 
+### live2d 的两条出路：雪碧图逐像素，骨架包可编辑（F10.1 / F10.5，v2.07）
+
+动画卡的导出是**菜单**（`LIVE2D_EXPORT_FORMATS = ['sheet', 'bones']`），因为它给的**不是同一个东西**：一份逐像素等于画布、一份可继续编辑但不含非骨骼形变。分派形状与文本 / 设计同一条（`export-plan.ts` 的 `live2d: (format) => void`），而**必须排在媒体那支之前**——`isLive2dKind` 与 `isMediaKind` 是两根指针，写反了这张卡会落到「原样下载」上，导出一份引擎读不懂的 JSON。
+
+**一、帧序列雪碧图。** `spritesheetPlanOf` 是纯函数（12fps、一个循环烘到底、≤240 帧、8 列、单帧目标 512 宽、整张任一边 ≤8192 就等比缩单帧）。渲染用一块离屏 canvas 跑 WebGL 舞台（`preserveDrawingBuffer: true`——不开的话 `drawImage` 读到的可能是已被下一帧清掉的缓冲），逐帧 `drawImage` 拼进 2D 画布，`toBlob` 之后连同 `sheet.json`（布局与节律）与 `README.txt`（Godot / Unity / 微信小游戏各一段能照抄的用法）压成 zip。**帧数与节律同源**：`fps × loop` 向上取整、至少 2 帧；播放器按 `time * fps % count` 换帧就正好接上，因为动作曲线是正弦整周期、关键帧环绕插值。
+
+**二、DragonBones 骨架包。** 为什么不是 Spine：Spine 的运行时许可绑在编辑器上（没有授权不能合法分发运行时）；DragonBones 的 JSON 与运行时都开源，微信小游戏官方支持。产物是 `_ske.json` + `_tex.json` + 贴图（重编码成 PNG——贴图可能是 JPEG / WebP，而各引擎加载器对图集的常见假设是 PNG）。
+
+JSON 的形状**照运行时解析器（`ObjectDataParser`）的读法写**，不照文档里的一句话写——这三处写错，文件「能打开」但画出来是错的，而且不报错：
+
+| 字段 | 形状 | 为什么是这个形状 |
+| --- | --- | --- |
+| `weights` | 逐顶点 `[骨数, 骨号, 权重, 骨号, 权重, …]` | 解析器按顺序推着读，**骨号是 `bone` 数组的下标**；末一根用 `1 − 其余` 保证逐位和为 1（各舍各的会留下 1e-4 的缝隙，在 1024px 贴图上就是零点几像素的漂移） |
+| `bonePose` | 每骨 7 个数 `[骨号, a, b, c, d, tx, ty]` | 是**绑定姿态的世界矩阵**；本模型骨骼只平移 + 旋转、不缩放，所以恒为 `[1,0,0,1,ox,oy]`。解析器用它的逆把顶点换算成「骨内坐标」，运行时再拿动画中的骨矩阵乘回去 |
+| `slotPose` | 单位矩阵 | 槽挂在原点的合成根骨 `root` 上，世界矩阵就是单位阵——顶点因此不需要额外的槽变换 |
+| `rotateFrame` | 每帧 `{ duration: 1, tweenEasing: 0, rotate: 度 }` | 相邻帧已经是曲线采样，再让运行时补间就等于二次平滑；`rotate` 是**度**，内部是弧度 |
+
+其余几处细节：合成根骨 `root`（所有无父级的模型骨骼挂在它下面，槽也挂在它上面）、一根槽一层网格 `body`、动画名 `idle`、`duration = frameCount`、`playTimes: 0`（循环）。**帧率与帧数同源**：24fps，长循环把帧率压到 ≤720 帧但**不压时长**（`frameRate = frameCount / loop`）；取时间按 `index / frameCount × loop` 而不是 `index / frameRate`——后者落两位小数，长循环末尾会差出几毫秒。
+
+**判据是「反算」而不是「看着对」**：从导出的 JSON 里按解析器的读法重建某个顶点在若干时刻的位置（顶点 → `slotPose` → 逐骨绑定矩阵求逆 → 权重混合 → 该时刻骨矩阵），与 `poseAt` 比，容差 **0.01px**（旋转存到 0.001°、权重六位小数的余量，比任何能看见的差小两个数量级）；另有一条「绕回来那一刻接得上」（末帧与首帧的差 < 整条曲线幅度的 10%）与一条变异（把所有骨的 `bonePose` 平移 1px ⇒ 反算明显偏离），后者防的是「两边都没读 `bonePose`、恰好都对」。导出器本身还在实现期用**官方运行时**（`dragonbones-runtime` 的 `ObjectDataParser`）真解析了一遍——形状不对时那一步就会抛，而不是等到用户把文件拖进引擎。
+
+**已知项**：骨架包只装骨骼能表达的那一半。呼吸 / 摇摆 / 倾头 / 网格雕刻按顶点权重连续衰减，一根刚体骨骼表达不了；DragonBones 的网格顶点动画（FFD）各家运行时实现不一、且会与骨骼动画二次叠加，烘进去只会得到「看起来像但不完全一样」的东西——所以 README 里明说了「要逐像素一致请用雪碧图」（§十二）。
+
 ### 「手动输入」落到空座位：先落一份空文件（F3.13，v1.57）
 
 座位可以先于它的产物存在（F1.11 的 `seatedEmpty`），而这枚按钮的含义是「我要写字」。所以 `ArtifactModal` 在**以编辑面打开**、产物不在、且形态是「产物就是它自己的文字」时，**先落一份空文件再回读**，把读回来的那一份灌进 payload——编辑面因此被画出来，而不是先给一句「产物不存在」。
@@ -1558,3 +1622,4 @@ node .workbuddy/verify/face-audit.mjs        # 13 个面 / 22 个成员
 9. **v1.49 漏改期间写歪的游离子文件不会自己回家**（v1.57 记录）：八处 id 当路径的调用修好之后，此前落到 `<root>/<座位 id>` 上的内容仍躺在项目根里（现场是 `lzyoke`、`bajgne` 两个文件，内容是建卡时那行种子文字：`# 文本`、`# 未命名`），而它们对应的卡至今没有产物。插件**不自动清理**：那是用户目录里的东西，而且「这个文件是垃圾」这件事只有人能确认。当前靠 F3.13 那张卡自己的路补上——「手动输入」在**正确路径**上重新落一份空文件，板面照旧（座位在、产物补上）。将来若要收，只能是一次**列清清单、由用户确认**的清理，判据是「文件名恰好是某个座位 id，且不在板面投影的 file 集合里」；在此之前，它们也不会被认回某张卡——扫描落座对的是 **file**，座位 id 不是路径（这正是这次踩到的那条线）。
 10. **导出那条路的几个边角**（v1.68 / v1.66 / v1.65 / v1.64 记录，F10.1）：①**两端对齐**（`JUSTIFIED`）的多行文字在 `.fig` 里按左对齐烘——写器的 `position.x` 只认字形自己的进距，而段间那点拉伸是**排版器**算出来的；要在 Figma 里也拉开，得自己造 `derivedTextGlyphs`（逐字带坐标），而那份几何 blob 只有 `@open-pencil/fig` 内部能编码（`encodePathCommandsBlob` 没从包的 exports 露出来）。②**独立圆角**（`independentCorners`）的容器在 PDF 那条没补裁剪圆角——`<rect>` 只有一对 rx/ry，四个角各不相同就得写成 `<path>`（`clipPath` 支持 `<path>`，上游的 `roundedRectPath` 也能复用）。③~~**圆角矩 / 椭圆 / 文本 / 矢量越界**时，PPT 那条仍会让那一页（或那棵子树）退成图~~ **已关闭（v1.68）**：夹不动的那些改走「套一个同尺寸的裁切框 → 连裁切一起烘成一张 PNG → 用图片顶掉」——图片是矩形，收进框之后「裁剪」与画布上「裁掉」是同一件事（§九「PPT 那条的另一半」）。**剩下的边角**：转过 / 翻转的越界子块仍会退图，因为那条链上「按父坐标写回 `x`/`y`」不成立——要做得先把 `applyWorldTransform` 那套分解搬过来，或者改成按世界矩阵整棵重挂。三条都只影响「画得对不对」或「能不能再编辑」的一个边角，不改产物结构，也都不会静默——画出来（或改起来）就是能看见的样子。
 11. **媒体生成依赖部署的模型路线**（v1.70，F2.7）：三条生成缝的默认实现从 `llm-pi-ai.providers` 里按**模型族指纹**找路线（`seedream` → 图片、`seedance` → 视频），所以**一份没配这两条 provider 的部署上，图片 / 视频节点照旧能建、能预览、能引用、能进会话，只是生成会如实报「没有可用的路线」**（`noRouteReason` 那句话会把「想要什么 / 按什么找 / 现在有哪些路线」一起说清，这是有意写成能让人动手的形状）。本机实测：现有的 `gw` 网关（`api: openai-responses`）对 `/images/generations`、`/contents/generations/tasks` **一律 404**（音频连试都不用试：它从来不走网关那条主机，见 §五「音频：第三个产地」）——这不是配置写法的题，是**后端能力**的题；在模型配置里加一条 `doubao` 走火山方舟（`https://ark.cn-beijing.volces.com/api/v3`）即可真调用 Seedream / Seedance，插件侧一行都不用改。**本机已加（2026-10-16）**：`doubao` 路线（火山方舟 `baseURL` + `apiKeyEnv: DOUBAO_API_KEY`，模型 `doubao-seedream-5-0-flash-260915` / `doubao-seedance-2-0-mini-260615`）——两个指纹都命中，图片与视频这两条已就绪。注意 `routes.ts` **不读 `api` 字段**，所以那条路线上写着 `api: openai-completions` 不构成任何阻挡。音频那一条在**本机配置**里仍没有指纹可命中（没有任何路线声明 `seed-audio` 模型），因此会如实报「没有可用的路线」；但**v1.82 起它有真实现**——加一条带 `doubao-seed-audio-1-0` 的路线即可用，只是主机与鉴权都与方舟不同（§五「音频：第三个产地」）。同一条上还有两处边角：①**媒体预览受 `VIEW_BYTES_CAP`（16MB）限制**（`src/core/artifact/io/artifact-io.ts`）——超了走兜底预览并如实标记 `truncated`，不截断、不静默（**v1.72 起这句话直接写在卡面上**：`media-face.ts` 的 `too-large` 态与全屏预览共用同一批文案，见 §五「媒体卡面」）；视频节点因此对「手边一段大片子」不算好用的预览器（生成出来的短片没这个问题）。②**音频的密钥是另一套**（v1.82 已接上，见 §五「音频：第三个产地」）——同一个厂商的两个控制台，`X-Api-Key` 与方舟的 Bearer 不是一把 key；一条路线上声明了音频模型却没配语音 key 时，401 的文案会直接点出这件事，而不是留一句状态码。
+12. **动画卡的三条边界**（v2.07，F2.8 / F10.5）：①**骨架包不含非骨骼形变**——呼吸 / 摇摆 / 倾头 / 网格雕刻按顶点权重连续衰减，一根刚体骨骼表达不了；DragonBones 的网格顶点动画（FFD）各家运行时实现不一，且会与骨骼动画**二次叠加**，烘进去只会得到「看起来像但不完全一样」的结果，所以导出器只装骨骼那一层，README 与产品文案都把「要逐像素一致请用雪碧图」写在明处。②**骨骼的旋转只有一条曲线**（`boneTracks.<骨>.rot`）且上限 ±0.4rad（约 23°）、条数上限 12——那是「头颈肩臂」的量级，不是甩胳膊；父级只许指向数组里更早的骨（无环，一遍线性扫）。③**单点形态不参与雕刻**：`poseAt` 没有顶点序号，`deform.offsets` 那张稀疏表管不到它，所以雕过的模型上「连续坐标采样」与「网格顶点」会有差——舞台、卡面、雪碧图导出都走网格，`poseAt` 只服务判据与骨架导出，这条差不会出现在界面上。
