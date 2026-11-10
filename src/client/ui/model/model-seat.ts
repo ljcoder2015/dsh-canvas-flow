@@ -69,13 +69,13 @@ export interface SeatFacts {
  * 报得出来（`tests/core/media/` 里有一条判据钉住 `MEDIA_CAPABILITIES` 与 kind 表的
  * `MEDIA_KINDS` 相等）。
  *
- * live2d 是第四种「有生成能力的卡」，但它**借生图那条能力**：贴图是它唯一的重活，
+ * skeleton2d 是第四种「有生成能力的卡」，但它**借生图那条能力**：贴图是它唯一的重活，
  * 模型 JSON 本地写。所以它的席位列的是 seedream 那一族、写的是卡片记录上的
  * `mediaModel`——与图片卡完全同一条落点，只是 kind id 不同。
  */
 export function mediaCapabilityOf(kind: string): MediaCapability | undefined {
   const id = resolveKindId(kind)
-  if (id === 'live2d') return 'image'
+  if (id === 'skeleton2d') return 'image'
   return MEDIA_CAPABILITIES.find((capability) => capability === id)
 }
 

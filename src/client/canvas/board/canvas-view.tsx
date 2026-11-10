@@ -73,9 +73,9 @@ import {
 } from '../asset/notice.ts'
 import { importFromFile } from '../asset/import-file.ts'
 import { mediaExportPlanOf } from '../export/media-export.ts'
-import { exportLive2dDragonBones, exportLive2dSpritesheet, loadLive2dTexture, type Live2dExportFormat } from '../export/live2d-export.ts'
+import { exportSkeleton2dDragonBones, exportSkeleton2dSpritesheet, loadSkeleton2dTexture, type Skeleton2dExportFormat } from '../export/skeleton2d-export.ts'
 import { markdownImageSrc } from '../../artifact/viewers/markdown-image.ts'
-import { normalizeLive2dModel } from '../../../core/live2d/model.ts'
+import { normalizeSkeleton2dModel } from '../../../core/skeleton2d/model.ts'
 import { exportOfferOf, type ExportOffer } from '../export/export-plan.ts'
 import { exportDesign, type DesignExportFormat } from '../export/design-export.ts'
 import { loadDesignEngine } from '../../artifact/viewers/design/design-engine-module.ts'
@@ -187,7 +187,7 @@ const DOCK_SPECS: readonly DockSpec[] = [
   { label: 'canvas.dock.image', extension: 'png', kind: 'image' },
   { label: 'canvas.dock.video', extension: 'mp4', kind: 'video' },
   { label: 'canvas.dock.audio', extension: 'mp3', kind: 'audio' },
-  { label: 'canvas.dock.live2d', extension: 'live2d.json', kind: 'live2d' },
+  { label: 'canvas.dock.skeleton2d', extension: 'skeleton2d.json', kind: 'skeleton2d' },
 ]
 
 /**
@@ -999,7 +999,7 @@ export function CanvasBoard(props: CanvasBoardProps) {
   )
 
   /**
-   * Live2D 卡的导出：两条出路，读的东西**同一条**（`readArtifact` 拿模型 JSON，贴图走
+   * Skeleton2D 卡的导出：两条出路，读的东西**同一条**（`readArtifact` 拿模型 JSON，贴图走
    * 工作区路由），只是最后烘的东西不同（F10.1）。
    *
    * - `sheet`：逐帧渲染雪碧图（与卡面 / 全屏同一份变形算术），呼吸那几层全在；
@@ -1010,8 +1010,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
    *
    * 被拒照实说：产物还没写、JSON 读不懂、贴图不在——三种都是界面上一句话的事，不是异常。
    */
-  const exportLive2dCard = useCallback(
-    (card: BoardCard, format: Live2dExportFormat) => {
+  const exportSkeleton2dCard = useCallback(
+    (card: BoardCard, format: Skeleton2dExportFormat) => {
       if (projectId === '') return
       setError('')
       setNotice(null)
@@ -1022,14 +1022,14 @@ export function CanvasBoard(props: CanvasBoardProps) {
           return
         }
         try {
-          const model = normalizeLive2dModel(JSON.parse(view.text) as Record<string, unknown>)
+          const model = normalizeSkeleton2dModel(JSON.parse(view.text) as Record<string, unknown>)
           if (model === undefined) {
             setNotice({ text: t('canvas.export.mediaFailed', { reason: '模型 JSON 读不懂；先重新生成一次这张卡' }), tone: 'warn' })
             return
           }
           // 骨架这条要先看有没有骨骼：没骨骼时连贴图都不用读，直接把下一步说清。
           if (format === 'bones' && (model.bones === undefined || model.bones.length === 0)) {
-            setNotice({ text: t('canvas.export.live2dBonesAbsent'), tone: 'warn' })
+            setNotice({ text: t('canvas.export.skeleton2dBonesAbsent'), tone: 'warn' })
             return
           }
           const textureUrl = markdownImageSrc(projectId, view.file === '' ? card.file : view.file, model.texture)
@@ -1037,21 +1037,21 @@ export function CanvasBoard(props: CanvasBoardProps) {
             setNotice({ text: t('canvas.export.mediaFailed', { reason: `贴图引用「${model.texture}」不在项目里` }), tone: 'warn' })
             return
           }
-          const image = await loadLive2dTexture(textureUrl)
+          const image = await loadSkeleton2dTexture(textureUrl)
           if (image === null) {
             setNotice({ text: t('canvas.export.mediaFailed', { reason: `贴图加载失败（${model.texture} 可能已被删除或移走）` }), tone: 'warn' })
             return
           }
           if (format === 'bones') {
-            const outcome = await exportLive2dDragonBones(model, image, card.name, downloadBytes)
+            const outcome = await exportSkeleton2dDragonBones(model, image, card.name, downloadBytes)
             setNotice({
-              text: t('canvas.export.live2dBonesDone', { name: outcome.name, bones: String(outcome.bones), count: String(outcome.frames) }),
+              text: t('canvas.export.skeleton2dBonesDone', { name: outcome.name, bones: String(outcome.bones), count: String(outcome.frames) }),
               tone: 'ok',
             })
             return
           }
-          const outcome = await exportLive2dSpritesheet(model, image, card.name, downloadBytes)
-          setNotice({ text: t('canvas.export.live2dDone', { name: outcome.name, count: String(outcome.frames) }), tone: 'ok' })
+          const outcome = await exportSkeleton2dSpritesheet(model, image, card.name, downloadBytes)
+          setNotice({ text: t('canvas.export.skeleton2dDone', { name: outcome.name, count: String(outcome.frames) }), tone: 'ok' })
         } catch (error) {
           setNotice({ text: t('canvas.export.bundleFailed', { reason: error instanceof Error ? error.message : String(error) }), tone: 'error' })
         }
@@ -1178,9 +1178,9 @@ export function CanvasBoard(props: CanvasBoardProps) {
       text: (format) => exportTextCard(card, format),
       design: (format) => exportDesignCard(card, format),
       media: () => exportMediaCard(card),
-      live2d: (format) => exportLive2dCard(card, format),
+      skeleton2d: (format) => exportSkeleton2dCard(card, format),
     })
-  }, [exportBundleCard, exportDesignCard, exportHostCard, exportLive2dCard, exportMediaCard, exportTextCard, selectionCard, summaries])
+  }, [exportBundleCard, exportDesignCard, exportHostCard, exportSkeleton2dCard, exportMediaCard, exportTextCard, selectionCard, summaries])
 
   // ── card composer ─────────────────────────────────────────────────────────
 

@@ -1,5 +1,5 @@
 /**
- * dsh-canvas — live2d-lite 的**曲线采样**（纯，零依赖）。
+ * dsh-canvas — skeleton2d-lite 的**曲线采样**（纯，零依赖）。
  *
  * 「一条动作/骨骼曲线在时刻 t 是多少」的唯一真源：正弦参数化与关键帧两条驱动路在这
  * 里分岔。单放一个模块是因为**骨骼层（`bones.ts`）与变形层（`rig.ts`）都要用同一副
@@ -9,7 +9,7 @@
  * 上环绕余弦插值——两条路都保证 `t + loop` 处逐位重现。
  */
 
-import type { Live2dKeyframe, Live2dMotion } from './model.ts'
+import type { Skeleton2dKeyframe, Skeleton2dMotion } from './model.ts'
 
 /**
  * 一组正弦动作在时刻 t 的取值（-1 … 1）。
@@ -33,10 +33,10 @@ function waveAt(cycles: number, phase: number, t: number, loop: number): number 
  * 这一段里的位置（前者还没过 1，后者已经过了）。**两半都要算**——只算后一半的话，
  * 尾键到缝合点之间会停在尾键值上，过 1 那一刻再跳到环绕值，循环处就是一个硬接。
  */
-export function sampleKeys(keys: readonly Live2dKeyframe[], p: number): number {
+export function sampleKeys(keys: readonly Skeleton2dKeyframe[], p: number): number {
   const wrapped = p - Math.floor(p)
-  const first = keys[0] as Live2dKeyframe
-  const last = keys[keys.length - 1] as Live2dKeyframe
+  const first = keys[0] as Skeleton2dKeyframe
+  const last = keys[keys.length - 1] as Skeleton2dKeyframe
   // 环绕段：`p` 落在尾键之后（还没过 1）或首键之前（已经过了 1）。前者直接用 p，后者
   // 借 `+1` 把它搬到同一条数轴上——两条路落在同一段里，缝合处因此是余弦，不是硬接。
   if (wrapped > last.t || wrapped <= first.t) {
@@ -46,8 +46,8 @@ export function sampleKeys(keys: readonly Live2dKeyframe[], p: number): number {
     return last.v + ((first.v - last.v) * (1 - Math.cos(Math.PI * u))) / 2
   }
   for (let index = 0; index < keys.length - 1; index += 1) {
-    const a = keys[index] as Live2dKeyframe
-    const b = keys[index + 1] as Live2dKeyframe
+    const a = keys[index] as Skeleton2dKeyframe
+    const b = keys[index + 1] as Skeleton2dKeyframe
     if (wrapped <= b.t) {
       const span = b.t - a.t
       if (span <= 0) return a.v
@@ -62,7 +62,7 @@ export function sampleKeys(keys: readonly Live2dKeyframe[], p: number): number {
  * 一组动作在时刻 t 的取值（-1 … 1）：有关键帧（≥2 键）走曲线，否则走正弦。
  * 这是「两条驱动路」的唯一分岔点——渲染、导出、判据都只认这一扇门。
  */
-export function motionValueAt(motion: Live2dMotion, t: number, loop: number): number {
+export function motionValueAt(motion: Skeleton2dMotion, t: number, loop: number): number {
   if (motion.keys !== undefined && motion.keys.length >= 2) {
     return sampleKeys(motion.keys, t / loop)
   }

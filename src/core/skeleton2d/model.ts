@@ -1,15 +1,19 @@
 /**
- * dsh-canvas — live2d-lite 模型格式（live2d 卡的产物本体）。
+ * dsh-canvas — skeleton2d-lite 模型格式（skeleton2d 卡的产物本体）。
  *
- * 一张 live2d 卡的产物是**一份 JSON**（`live2d/名字.live2d.json`），它描述「一张贴图
+ * 一张 skeleton2d 卡的产物是**一份 JSON**（`skeleton2d/名字.skeleton2d.json`），它描述「一张贴图
  * 怎么动起来」：贴图路径、一个循环时长、以及三组参数化的动作（呼吸 / 摇摆 / 倾头）。
  * 贴图是项目里的另一份图片文件，模型里以**相对路径**引用——引用即数据，贴图照旧是一张
  * 普通图片卡也能读的文件，被删了模型才坏，坏的方式与 markdown 引用坏图一致。
  *
+ * 「按 Godot 的 Skeleton2D 建模」：一份模型 = **一具骨架**（`Bone2D` 那样的父子关节，
+ * rest 位置 + 旋转轨道）＋ **若干绑定到它上面的网格层**（`Polygon2D` 挂 skeleton 那种）。
+ * 层是分开画的：每层从整幅贴图上裁一块矩形、带自己的掩码与网格密度，可以只绑一部分骨。
+ *
  * 「为什么不是 .moc3」：真正的 Live2D 模型只能在官方 Cubism Editor 里制作，从一张图片
- * 程序化地生成它做不到，且官方 SDK 的分发有许可负担。live2d-lite 走的是另一条现实的路：
- * 网格切分 + 参数化变形（顶点位移按离锚点的距离加权，离锚点越远动得越多），零第三方
- * 依赖、无许可问题，导出的帧序列各游戏引擎直接当素材用。
+ * 程序化地生成它做不到，且官方 SDK 的分发有许可负担。这份格式走的是另一条现实的路：
+ * 剪影分层 + 网格蒙皮 + 参数化变形（顶点位移按离锚点的距离加权），零第三方依赖、
+ * 无许可问题，导出的帧序列与 DragonBones 骨架包各引擎直接当素材用。
  *
  * **所有动作都是正弦，且周期由「每循环几拍」表达**（整数），所以任意时刻 t 的画面在
  * `t + loop` 处逐位重现——导出帧序列因此天然无缝循环，不需要任何补间收尾。这条性质
@@ -20,20 +24,20 @@
  * 只在这里——宿主写盘、客户端渲染、导出打包读到的都是同一个函数的产出。
  */
 
-/** 格式标记：一份 JSON 是不是 live2d-lite 模型，先认这个串。 */
-export const LIVE2D_FORMAT = 'dsh-live2d-lite'
+/** 格式标记：一份 JSON 是不是 skeleton2d-lite 模型，先认这个串。 */
+export const SKELETON2D_FORMAT = 'dsh-skeleton2d'
 
 /** 当前格式版本。读侧对更高版本如实拒绝，而不是猜它长什么样。 */
-export const LIVE2D_VERSION = 1
+export const SKELETON2D_VERSION = 1
 
 /** 产物的扩展名（含点）。detectKind 按 basename 的这个尾巴认它。 */
-export const LIVE2D_EXTENSION = '.live2d.json'
+export const SKELETON2D_EXTENSION = '.skeleton2d.json'
 
 /** 循环时长（秒）的缺省：呼吸两拍、摇摆一拍，4.8s 是三者都整除又不太拖沓的一档。 */
 export const DEFAULT_LOOP_SECONDS = 4.8
 
 /** 一个关键帧：`t` 是循环内的比例（0–1，不含 1——1 与 0 是同一个点），`v` 是动作取值（-1 … 1）。 */
-export interface Live2dKeyframe {
+export interface Skeleton2dKeyframe {
   t: number
   v: number
 }
@@ -47,7 +51,7 @@ export interface Live2dKeyframe {
  *   关键帧在 `[0,1)` 上环绕插值（尾键 → 首键），所以 `t+loop` 处逐位重现的无缝性质
  *   与正弦同源——编辑器随便加键都破不了循环。
  */
-export interface Live2dMotion {
+export interface Skeleton2dMotion {
   /** 每个循环里的整周期数。**必须是整数**——它保证了 `t + loop` 处画面逐位重现。 */
   cycles: number
   /** 振幅，以贴图高度为 1 的比例。0 = 这组动作关掉。 */
@@ -55,16 +59,16 @@ export interface Live2dMotion {
   /** 相位（0–1，一个周期内的偏移），用来让三组动作错开节拍。 */
   phase: number
   /** 关键帧（可选）：存在且 ≥2 个时驱动这组动作，正弦参数退位。 */
-  keys?: Live2dKeyframe[]
+  keys?: Skeleton2dKeyframe[]
 }
 
 /** 一处网格雕刻：`'col,row'`（网格顶点序号）→ uv 位移（贴图高为 1）。 */
-export type Live2dOffsets = Record<string, [number, number]>
+export type Skeleton2dOffsets = Record<string, [number, number]>
 
 /** 静态变形：用户在网格模式亲手摆出来的形状，不随时间动（Cubism 的「形状」那一半）。 */
-export interface Live2dDeform {
+export interface Skeleton2dDeform {
   /** 稀疏表：只存动过的顶点。空表 = 没雕过。 */
-  offsets: Live2dOffsets
+  offsets: Skeleton2dOffsets
 }
 
 /** 雕刻位移的上限（贴图高的比例）：再大就是撕图，不是造型。 */
@@ -76,7 +80,7 @@ export const DEFORM_MAX = 0.15
  * `parent` 必须指向**数组里更早**的一根——先父后子的次序既让层级合成一遍扫完，也
  * 天然排除成环。名字是蒙皮与轨道表的键，同一份模型里不许重名。
  */
-export interface Live2dBone {
+export interface Skeleton2dBone {
   name: string
   x: number
   y: number
@@ -84,17 +88,61 @@ export interface Live2dBone {
 }
 
 /** 一根骨骼的驱动曲线（缺 = 静止在 rest 位）。 */
-export interface Live2dBoneTrack {
+export interface Skeleton2dBoneTrack {
   /** 旋转关键帧：v ∈ [-1,1] 映射 ±{@link ./bones.ts} 的 `BONE_ROT_MAX` 弧度。 */
-  rot?: Live2dKeyframe[]
+  rot?: Skeleton2dKeyframe[]
 }
 
 /** 骨骼轨道表：骨骼名 → 该骨的曲线。只给铺了曲线的骨骼写条目。 */
-export type Live2dBoneTracks = Record<string, Live2dBoneTrack>
+export type Skeleton2dBoneTracks = Record<string, Skeleton2dBoneTrack>
 
-/** 一份归一后的 live2d-lite 模型。 */
-export interface Live2dModel {
-  format: typeof LIVE2D_FORMAT
+/** 一层网格的矩形：在整幅贴图上的位置与大小（uv，0–1）。 */
+export interface Skeleton2dRect {
+  x: number
+  y: number
+  w: number
+  h: number
+}
+
+/**
+ * 一层：从整幅贴图上裁下的一块，挂在自己的网格上。
+ *
+ * 掩码是**可选的**：裁一块矩形就够用的层（头、躯干）不写掩码，整块不透明；手臂、腿
+ * 这类要从邻层里抠出来的，掩码把「属于这层的像素」标出来——没有掩码的层画出矩形，
+ * 有掩码的层画出形状，两者用同一套网格与蒙皮算术。
+ *
+ * 掩码写成**游程长度**（`"12,340,5,88"`，逗号分隔，第一段是透明），量化到层内像素
+ * 网格：一串整数比一段 base64 更像「文件即产物」——打开 JSON 能读出这一层长什么样。
+ */
+export interface Skeleton2dLayer {
+  /** 层名：模型内唯一，也是轨道、判据与导出里的槽名。 */
+  name: string
+  rect: Skeleton2dRect
+  /** 层内掩码（游程长度，空格与换行无关）；缺席 = 整块不透明。 */
+  mask?: string
+  /** 掩码的栅格宽高（像素）：掩码串按这个尺寸逐行扫，缺省按矩形长宽比推。 */
+  mw?: number
+  mh?: number
+  /** 层内网格列数 / 行数（2–32）：层越小，格胞越细。 */
+  cols: number
+  rows: number
+  /** 只绑这几根骨（名字）；缺席 = 全部骨骼按距离蒙皮。 */
+  bones?: string[]
+  /** 层内雕刻：键是层内网格的 `列,行`（与整幅那一份同一个结构，只是坐标系在层内）。 */
+  deform?: Skeleton2dDeform
+}
+
+/** 层内网格密度的缺省与上下限：12×12 够摆一块肢体，格数再多每帧顶点上传就白给。 */
+export const LAYER_GRID_DEFAULT = 12
+export const LAYER_GRID_MIN = 2
+export const LAYER_GRID_MAX = 32
+
+/** 一层掩码的字符上限：超过就是坏数据（正常一层几十到几千个游程）。 */
+export const LAYER_MASK_MAX_CHARS = 200_000
+
+/** 一份归一后的 skeleton2d-lite 模型。 */
+export interface Skeleton2dModel {
+  format: typeof SKELETON2D_FORMAT
   version: number
   /** 贴图路径：**相对本 JSON 所在目录**（`少女.png`），项目根相对以 `/` 开头。 */
   texture: string
@@ -103,23 +151,27 @@ export interface Live2dModel {
   /** 动作锚点（归一化贴图坐标，0–1）：离它越远动得越多。人物贴图锚在脚底 (0.5, 1)。 */
   anchor: { x: number; y: number }
   /** 呼吸：纵向的起伏压缩（贴图顶端动得最多）。 */
-  breath: Live2dMotion
+  breath: Skeleton2dMotion
   /** 摇摆：横向的左右倾（同上，顶端动得最多）。 */
-  sway: Live2dMotion
+  sway: Skeleton2dMotion
   /** 倾头：绕锚点的小角度旋转。 */
-  tilt: Live2dMotion
+  tilt: Skeleton2dMotion
   /** 静态变形（可选）：网格模式雕出来的形状，缺席 = 没雕过。 */
-  deform?: Live2dDeform
+  deform?: Skeleton2dDeform
   /** 骨骼链（可选）：rest 位置先父后子排布；缺席 = 没绑过骨骼。 */
-  bones?: Live2dBone[]
+  bones?: Skeleton2dBone[]
   /** 骨骼轨道（可选）：骨骼名 → 旋转曲线；缺席或缺某骨 = 那根骨静止。 */
-  boneTracks?: Live2dBoneTracks
+  boneTracks?: Skeleton2dBoneTracks
+  /** 分层（可选）：每层一块矩形 + 掩码 + 自己的网格；缺席 = 整幅当一层。 */
+  layers?: Skeleton2dLayer[]
+  /** 生成时标记「打开就自动分层建骨」（客户端跑一次 `layerize`，之后写回成正式分层）。 */
+  autoRig?: boolean
   /** 生成时的提示词，只作出处记录，渲染不读它。 */
   prompt: string
 }
 
 /** 任何来路的一包 JSON：每个字段都可能缺席、类型不对、或者离谱。 */
-export type RawLive2dModel = Record<string, unknown>
+export type RawSkeleton2dModel = Record<string, unknown>
 
 /** 只收非空字符串；其余算「没给」。 */
 function text(value: unknown): string | undefined {
@@ -140,7 +192,7 @@ function clamp(value: number | undefined, min: number, max: number, fallback: nu
 }
 
 /** 收一组动作：拍数取整夹进 [0, 8]，振幅夹进 [0, 0.2]（0.2 已是夸张的动作），相位夹进 [0, 1)。 */
-function motionOf(raw: unknown, fallback: Live2dMotion): Live2dMotion {
+function motionOf(raw: unknown, fallback: Skeleton2dMotion): Skeleton2dMotion {
   if (typeof raw !== 'object' || raw === null) return fallback
   const entry = raw as Record<string, unknown>
   const cycles = finite(entry.cycles)
@@ -158,9 +210,9 @@ function motionOf(raw: unknown, fallback: Live2dMotion): Live2dMotion {
 export const MAX_KEYS = 64
 
 /** 收一支关键帧曲线：t 夹进 [0,1) 量化到千分位、v 夹进 [-1,1] 量化到千分位，按 t 排序；凑不足两键不算曲线。 */
-function keysOf(raw: unknown): Live2dKeyframe[] | undefined {
+function keysOf(raw: unknown): Skeleton2dKeyframe[] | undefined {
   if (!Array.isArray(raw)) return undefined
-  const keys: Live2dKeyframe[] = []
+  const keys: Skeleton2dKeyframe[] = []
   for (const entry of raw) {
     if (typeof entry !== 'object' || entry === null) continue
     const item = entry as Record<string, unknown>
@@ -182,11 +234,11 @@ function keysOf(raw: unknown): Live2dKeyframe[] | undefined {
  * 位移（量化到万分之一）。越界序号不报错也留着——渲染侧按序号查表，查不到的键自然
  * 哑火；空表整体收掉（「没雕过」就是没有 deform）。
  */
-function deformOf(raw: unknown): Live2dDeform | undefined {
+function deformOf(raw: unknown): Skeleton2dDeform | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined
   const offsets = (raw as Record<string, unknown>).offsets
   if (typeof offsets !== 'object' || offsets === null) return undefined
-  const result: Live2dOffsets = {}
+  const result: Skeleton2dOffsets = {}
   for (const [key, value] of Object.entries(offsets as Record<string, unknown>)) {
     if (!/^\d+,\d+$/.test(key) || !Array.isArray(value)) continue
     const du = finite(value[0])
@@ -197,7 +249,7 @@ function deformOf(raw: unknown): Live2dDeform | undefined {
   }
   if (Object.keys(result).length === 0) return undefined
   // 稳定序列化的另一半：顶点序号按字典序落盘，谁先雕、谁后雕不影响字节。
-  const sorted: Live2dOffsets = {}
+  const sorted: Skeleton2dOffsets = {}
   for (const key of Object.keys(result).sort()) sorted[key] = result[key] as [number, number]
   return { offsets: sorted }
 }
@@ -207,9 +259,9 @@ function deformOf(raw: unknown): Live2dDeform | undefined {
  * 一根（先父后子，天然无环）。无名、重名、指向自己或后人的统统丢掉——骨骼链是编辑
  * 器造出来的，读侧只收干净的。超过 {@link ./bones.ts} 的 `MAX_BONES` 截断。
  */
-function bonesOf(raw: unknown): Live2dBone[] | undefined {
+function bonesOf(raw: unknown): Skeleton2dBone[] | undefined {
   if (!Array.isArray(raw)) return undefined
-  const bones: Live2dBone[] = []
+  const bones: Skeleton2dBone[] = []
   for (const entry of raw) {
     if (typeof entry !== 'object' || entry === null) continue
     const item = entry as Record<string, unknown>
@@ -231,16 +283,16 @@ function bonesOf(raw: unknown): Live2dBone[] | undefined {
   return bones.length === 0 ? undefined : bones
 }
 
-/** 骨骼条数上限的真源在 `core/live2d/bones.ts`；这里复制常量避免 core 内新增环。 */
+/** 骨骼条数上限的真源在 `core/skeleton2d/bones.ts`；这里复制常量避免 core 内新增环。 */
 const MAX_BONES_LIMIT = 12
 
 /**
  * 收骨骼轨道表：键必须是骨骼清单里的名字，`rot` 走与动作同一副 `keysOf`（量化、
  * 排序、两键起）。查无此骨的条目整条丢——轨道跟骨骼走，骨骼没了轨道没有独立生命。
  */
-function boneTracksOf(raw: unknown, bones: Live2dBone[] | undefined): Live2dBoneTracks | undefined {
+function boneTracksOf(raw: unknown, bones: Skeleton2dBone[] | undefined): Skeleton2dBoneTracks | undefined {
   if (typeof raw !== 'object' || raw === null || bones === undefined) return undefined
-  const result: Live2dBoneTracks = {}
+  const result: Skeleton2dBoneTracks = {}
   for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
     if (!bones.some((bone) => bone.name === name)) continue
     if (typeof value !== 'object' || value === null) continue
@@ -251,7 +303,72 @@ function boneTracksOf(raw: unknown, bones: Live2dBone[] | undefined): Live2dBone
   return Object.keys(result).length === 0 ? undefined : result
 }
 
-/** 三组动作的出厂值：能看出「活着」，又不会动得像喝醉。 */export const DEFAULT_MOTIONS: Readonly<Record<'breath' | 'sway' | 'tilt', Live2dMotion>> = {
+/** 收一个矩形：四边都夹进 0–1，宽高至少一格（退化成点的层没有意义）。 */
+function rectOf(raw: unknown): Skeleton2dRect | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const entry = raw as Record<string, unknown>
+  const x = finite(entry.x)
+  const y = finite(entry.y)
+  const w = finite(entry.w)
+  const h = finite(entry.h)
+  if (x === undefined || y === undefined || w === undefined || h === undefined) return undefined
+  const left = Math.round(clamp(x, 0, 0.999, 0) * 1000) / 1000
+  const top = Math.round(clamp(y, 0, 0.999, 0) * 1000) / 1000
+  const width = Math.round(clamp(w, 0.001, 1 - left, 0.5) * 1000) / 1000
+  const height = Math.round(clamp(h, 0.001, 1 - top, 0.5) * 1000) / 1000
+  return { x: left, y: top, w: width, h: height }
+}
+
+/** 收一段游程掩码：只留数字与逗号（空白去掉），超过上限或凑不出游程就整体收掉。 */
+function maskOf(raw: unknown): string | undefined {
+  const text = typeof raw === 'string' ? raw.replace(/[\s,]+/g, ',').replace(/^,|,$/g, '') : ''
+  if (text === '' || text.length > LAYER_MASK_MAX_CHARS) return undefined
+  if (!/^\d+(,\d+)*$/.test(text)) return undefined
+  return text
+}
+
+/**
+ * 收一组分层：层名去重、矩形/网格各自收敛、绑定的骨骼必须真的存在（按名字筛，筛空了就
+ * 当「不限制」——一层绑不到骨不是错误，是「这层还没绑」）。掩码坏掉整层不丢：宁可画出
+ * 矩形也不让用户的层消失。
+ */
+function layersOf(raw: unknown, bones: Skeleton2dBone[] | undefined): Skeleton2dLayer[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const layers: Skeleton2dLayer[] = []
+  for (const entry of raw) {
+    if (typeof entry !== 'object' || entry === null) continue
+    const item = entry as Record<string, unknown>
+    const name = text(item.name)
+    const rect = rectOf(item.rect)
+    if (name === undefined || rect === undefined) continue
+    if (layers.some((layer) => layer.name === name)) continue
+    const cols = Math.round(clamp(finite(item.cols), LAYER_GRID_MIN, LAYER_GRID_MAX, LAYER_GRID_DEFAULT))
+    const rows = Math.round(clamp(finite(item.rows), LAYER_GRID_MIN, LAYER_GRID_MAX, LAYER_GRID_DEFAULT))
+    const named = Array.isArray(item.bones)
+      ? item.bones
+          .map((value) => text(value))
+          .filter((value): value is string => value !== undefined && (bones ?? []).some((bone) => bone.name === value))
+      : []
+    const bound = named.length === 0 ? undefined : Array.from(new Set(named))
+    const deform = deformOf(item.deform)
+    const mask = maskOf(item.mask)
+    const mw = mask === undefined ? undefined : Math.round(clamp(finite(item.mw), 1, 512, 0))
+    const mh = mask === undefined ? undefined : Math.round(clamp(finite(item.mh), 1, 512, 0))
+    layers.push({
+      name,
+      rect,
+      cols,
+      rows,
+      ...(mask === undefined ? {} : { mask }),
+      ...(mask !== undefined && mw !== undefined && mw > 0 && mh !== undefined && mh > 0 ? { mw, mh } : {}),
+      ...(bound === undefined ? {} : { bones: bound }),
+      ...(deform === undefined ? {} : { deform }),
+    })
+  }
+  return layers.length === 0 ? undefined : layers
+}
+
+/** 三组动作的出厂值：能看出「活着」，又不会动得像喝醉。 */export const DEFAULT_MOTIONS: Readonly<Record<'breath' | 'sway' | 'tilt', Skeleton2dMotion>> = {
   breath: { cycles: 2, amplitude: 0.012, phase: 0 },
   sway: { cycles: 1, amplitude: 0.01, phase: 0 },
   tilt: { cycles: 1, amplitude: 0.008, phase: 0.25 },
@@ -264,12 +381,12 @@ function boneTracksOf(raw: unknown, bones: Live2dBone[] | undefined): Live2dBone
  * 返回 `undefined` 而不是补一个缺省。其余字段全部有出厂值：一份手写的最小 JSON
  * （`{ format, texture }`）就是一份能跑的模型。
  */
-export function normalizeLive2dModel(raw: RawLive2dModel | undefined | null): Live2dModel | undefined {
+export function normalizeSkeleton2dModel(raw: RawSkeleton2dModel | undefined | null): Skeleton2dModel | undefined {
   if (raw === undefined || raw === null) return undefined
   const format = text(raw.format)
-  if (format !== LIVE2D_FORMAT) return undefined
+  if (format !== SKELETON2D_FORMAT) return undefined
   const version = finite(raw.version)
-  if (version !== undefined && version > LIVE2D_VERSION) return undefined
+  if (version !== undefined && version > SKELETON2D_VERSION) return undefined
   const texture = text(raw.texture)
   if (texture === undefined) return undefined
   const loop = finite(raw.loop)
@@ -277,9 +394,10 @@ export function normalizeLive2dModel(raw: RawLive2dModel | undefined | null): Li
   const motions = (typeof raw.motions === 'object' && raw.motions !== null ? raw.motions : {}) as Record<string, unknown>
   const bones = bonesOf(raw.bones)
   const boneTracks = boneTracksOf(raw.boneTracks, bones)
+  const layers = layersOf(raw.layers, bones)
   return {
-    format: LIVE2D_FORMAT,
-    version: LIVE2D_VERSION,
+    format: SKELETON2D_FORMAT,
+    version: SKELETON2D_VERSION,
     texture,
     loop: clamp(loop, 1, 60, DEFAULT_LOOP_SECONDS),
     anchor: {
@@ -292,11 +410,13 @@ export function normalizeLive2dModel(raw: RawLive2dModel | undefined | null): Li
     deform: deformOf(raw.deform),
     ...(bones === undefined ? {} : { bones }),
     ...(boneTracks === undefined ? {} : { boneTracks }),
+    ...(layers === undefined ? {} : { layers }),
+    ...(raw.autoRig === true ? { autoRig: true } : {}),
     prompt: text(raw.prompt) ?? '',
   }
 }
 /** 稳定序列化：字段顺序固定，两次生成同一模型得到逐字节相同的文本。 */
-export function serializeLive2dModel(model: Live2dModel): string {
+export function serializeSkeleton2dModel(model: Skeleton2dModel): string {
   return `${JSON.stringify(
     {
       format: model.format,
@@ -308,6 +428,8 @@ export function serializeLive2dModel(model: Live2dModel): string {
       ...(model.deform === undefined ? {} : { deform: model.deform }),
       ...(model.bones === undefined ? {} : { bones: model.bones }),
       ...(model.boneTracks === undefined ? {} : { boneTracks: model.boneTracks }),
+      ...(model.layers === undefined ? {} : { layers: model.layers }),
+      ...(model.autoRig === true ? { autoRig: true } : {}),
       prompt: model.prompt,
     },
     null,
@@ -349,12 +471,12 @@ export function texturePathOf(modelFile: string, texture: string): string | unde
 /**
  * 一次生成落在哪张贴图上：与模型文件同目录、同词干的 `.png`。
  *
- * `live2d/少女.live2d.json` → `live2d/少女.png`。贴图跟模型住在一起，整张卡连图带模型
+ * `skeleton2d/少女.skeleton2d.json` → `skeleton2d/少女.png`。贴图跟模型住在一起，整张卡连图带模型
  * 搬一次目录就搬全了；不用 `images/` 是因为它是模型的内部零件，不是一张独立的图卡。
  */
 export function defaultTexturePathOf(modelFile: string): string {
   const directory = directoryOf(modelFile)
-  const stem = modelFile.slice(directory.length + (directory === '' ? 0 : 1)).replace(/\.live2d\.json$/i, '')
+  const stem = modelFile.slice(directory.length + (directory === '' ? 0 : 1)).replace(/\.skeleton2d\.json$/i, '')
   const name = `${stem}.png`
   return directory === '' ? name : `${directory}/${name}`
 }
@@ -362,7 +484,7 @@ export function defaultTexturePathOf(modelFile: string): string {
 /**
  * 贴图的绝对位置 → 模型里的相对引用。
  *
- * 生成时贴图可能在任何地方（上游图卡在 `images/`、自动落在 `live2d/`）；模型里引用它
+ * 生成时贴图可能在任何地方（上游图卡在 `images/`、自动落在 `skeleton2d/`）；模型里引用它
  * 一律走这条：同目录就写裸文件名（搬目录不断链），否则写项目根相对的 `/` 前缀形式。
  * 算不出相对关系（不可能，项目内必有公共前缀；防御分支）就退回根相对。
  */

@@ -33,7 +33,7 @@ import { markdownImageSrc } from '../../artifact/viewers/markdown-image.ts'
 import { useDesignShot, useWebAppHtml } from './card-shot.ts'
 import { useDesignEngineWarmup } from './design-warmup.ts'
 import { useAspectReport, useMediaAsset } from './card-media.ts'
-import { Live2dCardFace } from './live2d-face.tsx'
+import { Skeleton2dCardFace } from './skeleton2d-face.tsx'
 import { mediaFaceOf, type MediaAsset, type MediaFace } from './media-face.ts'
 import { sizeOfCard } from '../../../core/canvas/card/card-size.ts'
 
@@ -362,10 +362,10 @@ export function CardTile(props: CardTileProps) {
           // 媒体卡片：产物自己。`empty` 那一路退回下面的大纲行——「这张卡还没有东西」
           // 本来就该是那个样子，而不是一条说不清的提示。
           <MediaPreview asset={media} face={mediaFace} t={t} />
-        ) : kind === 'live2d' && summary !== undefined ? (
-          // Live2D 卡：动起来的贴图（模型 JSON + 工作区路由上的贴图）。`bytes` 为 0 的
+        ) : kind === 'skeleton2d' && summary !== undefined ? (
+          // Skeleton2D 卡：动起来的贴图（模型 JSON + 工作区路由上的贴图）。`bytes` 为 0 的
           // 空座位自己说「产物不存在」；比例由卡面量完报回宿主（与媒体卡同一条 F3.11）。
-          <Live2dCardFace bridge={bridge} card={card} projectId={projectId} bytes={summary.bytes} enabled={summary !== undefined} t={t} />
+          <Skeleton2dCardFace bridge={bridge} card={card} projectId={projectId} bytes={summary.bytes} enabled={summary !== undefined} t={t} />
         ) : kind === 'design' && designShot !== undefined ? (
           // 设计卡片：场景图离屏渲染成的截图。
           <img className="dsh-canvas-card-shot" src={designShot} alt="" draggable={false} />

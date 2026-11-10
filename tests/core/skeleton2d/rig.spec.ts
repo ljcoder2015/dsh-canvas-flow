@@ -1,5 +1,5 @@
 /**
- * dsh-canvas — live2d-lite 变形数学的判据。
+ * dsh-canvas — skeleton2d-lite 变形数学的判据。
  *
  * 钉三件事：
  * 1. **无缝循环是数学性质**：`t + loop` 处的网格与 `t` 处逐位相同——导出帧序列没有
@@ -19,11 +19,11 @@ import {
   poseGridAt,
   sampleKeys,
   vertexWeight,
-} from '../../../src/core/live2d/rig.ts'
-import { LIVE2D_FORMAT, normalizeLive2dModel, type Live2dModel, type Live2dMotion } from '../../../src/core/live2d/model.ts'
+} from '../../../src/core/skeleton2d/rig.ts'
+import { SKELETON2D_FORMAT, normalizeSkeleton2dModel, type Skeleton2dModel, type Skeleton2dMotion } from '../../../src/core/skeleton2d/model.ts'
 
-const MODEL: Live2dModel = normalizeLive2dModel({
-  format: LIVE2D_FORMAT,
+const MODEL: Skeleton2dModel = normalizeSkeleton2dModel({
+  format: SKELETON2D_FORMAT,
   texture: '少女.png',
   motions: {
     breath: { cycles: 2, amplitude: 0.02, phase: 0 },
@@ -72,8 +72,8 @@ describe('无缝循环', () => {
   })
 
   it('t=0 时相位为零的动作位移为零（tilt 带 0.25 相位，单独一个模型验它）', () => {
-    const noTilt: Live2dModel = normalizeLive2dModel({
-      format: LIVE2D_FORMAT,
+    const noTilt: Skeleton2dModel = normalizeSkeleton2dModel({
+      format: SKELETON2D_FORMAT,
       texture: '少女.png',
       motions: {
         breath: { cycles: 2, amplitude: 0.02, phase: 0 },
@@ -116,7 +116,7 @@ describe('两处消费同一份算术', () => {
 
 describe('关键帧曲线', () => {
   /** 两枚键的直线思维曲线：t=0.25 处 v=-1，t=0.75 处 v=1。 */
-  const CURVE: Live2dMotion = {
+  const CURVE: Skeleton2dMotion = {
     cycles: 0,
     amplitude: 0.01,
     phase: 0,
@@ -161,17 +161,17 @@ describe('关键帧曲线', () => {
   })
 
   it('关键帧驱动与正弦驱动是同一扇门后面的两条路（`motionValueAt` 是唯一分岔点）', () => {
-    const sine: Live2dMotion = { cycles: 1, amplitude: 1, phase: 0 }
+    const sine: Skeleton2dMotion = { cycles: 1, amplitude: 1, phase: 0 }
     expect(motionValueAt(sine, 0.25, 1)).toBeCloseTo(1, 12)
     // 有关键帧（≥2 键）时正弦参数彻底退位：cycles=0 的正弦恒为零，曲线却在动。
     expect(motionValueAt(CURVE, 0.4, 1)).not.toBe(0)
-    const singleton: Live2dMotion = { cycles: 1, amplitude: 1, phase: 0, keys: [{ t: 0.5, v: 0.9 }] }
+    const singleton: Skeleton2dMotion = { cycles: 1, amplitude: 1, phase: 0, keys: [{ t: 0.5, v: 0.9 }] }
     expect(motionValueAt(singleton, 0.25, 1)).toBeCloseTo(1, 12)
   })
 
   it('无缝循环在关键帧驱动下依然成立：`t + loop` 处的网格与 `t` 处重合', () => {
-    const keyed: Live2dModel = normalizeLive2dModel({
-      format: LIVE2D_FORMAT,
+    const keyed: Skeleton2dModel = normalizeSkeleton2dModel({
+      format: SKELETON2D_FORMAT,
       texture: '少女.png',
       motions: {
         breath: { cycles: 2, amplitude: 0.02, keys: [{ t: 0.2, v: -1 }, { t: 0.6, v: 1 }] },
@@ -191,8 +191,8 @@ describe('关键帧曲线', () => {
 })
 
 describe('网格雕刻', () => {
-  const SCULPTED: Live2dModel = normalizeLive2dModel({
-    format: LIVE2D_FORMAT,
+  const SCULPTED: Skeleton2dModel = normalizeSkeleton2dModel({
+    format: SKELETON2D_FORMAT,
     texture: '少女.png',
     motions: {
       breath: { cycles: 2, amplitude: 0, phase: 0 },

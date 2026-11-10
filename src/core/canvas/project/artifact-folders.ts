@@ -52,7 +52,7 @@ export const ARTIFACT_FOLDERS: Readonly<Record<string, string>> = {
   image: 'images',
   video: 'videos',
   audio: 'audio',
-  live2d: 'live2d',
+  skeleton2d: 'skeleton2d',
   data: 'data',
   file: 'files',
   folder: 'folders',

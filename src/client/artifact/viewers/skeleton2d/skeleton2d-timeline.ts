@@ -1,5 +1,5 @@
 /**
- * dsh-canvas — live2d 编辑器**时间线模式**的纯算术（零依赖、零 React）。
+ * dsh-canvas — skeleton2d 编辑器**时间线模式**的纯算术（零依赖、零 React）。
  *
  * 对应 Cubism Editor 的动画工作区：每条动作（呼吸 / 摇摆 / 倾头）是一条**轨道**，
  * 横轴是循环（0–1），纵轴是动作取值（-1 … 1）。键画在轨道上，曲线按
@@ -9,8 +9,8 @@
  * 不在这里算——绘制方把「当前取值函数」递进来，这里只管把它画出来。
  */
 
-import type { Live2dKeyframe } from '../../../../core/live2d/model.ts'
-import { GRID_COLS } from '../../../../core/live2d/rig.ts'
+import type { Skeleton2dKeyframe } from '../../../../core/skeleton2d/model.ts'
+import { GRID_COLS } from '../../../../core/skeleton2d/rig.ts'
 
 /** 顶部标尺带的高度（像素）：刻度与循环百分比。 */
 export const RULER_HEIGHT = 18
@@ -60,7 +60,7 @@ export function yToValue(py: number, rect: TrackRect): number {
 }
 
 /** 一枚键的屏幕位置（横轴用整幅画布宽，纵轴用轨道矩形）。 */
-export function keyPoint(key: Live2dKeyframe, rect: TrackRect, width: number): { x: number; y: number } {
+export function keyPoint(key: Skeleton2dKeyframe, rect: TrackRect, width: number): { x: number; y: number } {
   return { x: timeToX(key.t, width), y: valueToY(key.v, rect) }
 }
 
@@ -68,14 +68,14 @@ export function keyPoint(key: Live2dKeyframe, rect: TrackRect, width: number): {
 export function nearestKey(
   px: number,
   py: number,
-  keys: readonly Live2dKeyframe[],
+  keys: readonly Skeleton2dKeyframe[],
   rect: TrackRect,
   width: number,
 ): number | undefined {
   let best = -1
   let bestDistance = KEY_RADIUS_PX
   for (let index = 0; index < keys.length; index += 1) {
-    const point = keyPoint(keys[index] as Live2dKeyframe, rect, width)
+    const point = keyPoint(keys[index] as Skeleton2dKeyframe, rect, width)
     const distance = Math.hypot(px - point.x, py - point.y)
     if (distance < bestDistance) {
       bestDistance = distance
@@ -106,7 +106,7 @@ export function drawTimeline(
   height: number,
   rects: readonly TrackRect[],
   values: readonly number[],
-  keys: readonly (readonly Live2dKeyframe[] | undefined)[],
+  keys: readonly (readonly Skeleton2dKeyframe[] | undefined)[],
   sampled: readonly ((p: number) => number)[],
   playhead: number,
   selected: { track: number; key: number } | undefined,
@@ -169,7 +169,7 @@ export function drawTimeline(
     const trackKeys = keys[index]
     if (trackKeys !== undefined) {
       for (let k = 0; k < trackKeys.length; k += 1) {
-        const point = keyPoint(trackKeys[k] as Live2dKeyframe, rect, width)
+        const point = keyPoint(trackKeys[k] as Skeleton2dKeyframe, rect, width)
         const grabbed = selected !== undefined && selected.track === index && selected.key === k
         ctx.fillStyle = grabbed ? 'rgba(255, 255, 255, 0.95)' : 'rgba(96, 165, 250, 0.95)'
         ctx.beginPath()

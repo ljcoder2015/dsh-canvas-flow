@@ -1,9 +1,9 @@
 /**
- * dsh-canvas — live2d 卡的全屏预览器（预览 / 编辑双态）。
+ * dsh-canvas — skeleton2d 卡的全屏预览器（预览 / 编辑双态）。
  *
  * 预览那一面与媒体三态同一个位置、同一条规矩：产物自己就是画面，所以画的是**动起来
- * 的贴图**，不是那串 JSON。编辑那一面（`live2d-editor.tsx`）是同一块画布加一栏参数
- * 面板，改动防抖写回产物本体。模型与贴图的读取规则在 `use-live2d.tsx`（卡面与全屏
+ * 的贴图**，不是那串 JSON。编辑那一面（`skeleton2d-editor.tsx`）是同一块画布加一栏参数
+ * 面板，改动防抖写回产物本体。模型与贴图的读取规则在 `use-skeleton2d.tsx`（卡面与全屏
  * 共用）。
  *
  * 「预览 / 编辑」的切换钮挂在头部插槽（`Slot at="header"`）——外壳只给位置、内容归
@@ -18,14 +18,14 @@ import { useState } from 'react'
 import { Slot, useChrome, useEscapeLayer } from '../../chrome.tsx'
 import type { Translate } from '../../../ui/locales.ts'
 import type { ArtifactView } from '../../../../types.ts'
-import { Live2dAnimation, live2dTextureUrl, useLive2dModel } from './use-live2d.tsx'
-import { Live2dEditor } from './live2d-editor.tsx'
+import { Skeleton2dAnimation, skeleton2dTextureUrl, useSkeleton2dModel } from './use-skeleton2d.tsx'
+import { Skeleton2dEditor } from './skeleton2d-editor.tsx'
 import type { ViewerRegistration } from '../types.ts'
 
-/** The live2d viewer: the animated model, letterboxed on a plain surface. */
-export function Live2dViewer({ view, t }: { view: ArtifactView; t: Translate }) {
+/** The skeleton2d viewer: the animated model, letterboxed on a plain surface. */
+export function Skeleton2dViewer({ view, t }: { view: ArtifactView; t: Translate }) {
   const chrome = useChrome()
-  const load = useLive2dModel(chrome.bridge, chrome.projectId, view.cardId, view.bytes, view.present && view.text !== '')
+  const load = useSkeleton2dModel(chrome.bridge, chrome.projectId, view.cardId, view.bytes, view.present && view.text !== '')
   const [editing, setEditing] = useState(false)
   // 编辑态占一层 Esc：先退编辑态，再轮到关窗。挂在组件顶上，顺位在最前。
   useEscapeLayer(editing, () => setEditing(false))
@@ -39,7 +39,7 @@ export function Live2dViewer({ view, t }: { view: ArtifactView; t: Translate }) 
   if (load.status === 'empty' || load.status === 'bad') {
     return <div className="dsh-canvas-viewer-note">{t('canvas.viewer.tooLarge')}</div>
   }
-  const textureUrl = live2dTextureUrl(chrome.projectId, view.file, load.model.texture)
+  const textureUrl = skeleton2dTextureUrl(chrome.projectId, view.file, load.model.texture)
   if (textureUrl === undefined) {
     return <div className="dsh-canvas-viewer-note">{t('canvas.viewer.tooLarge')}</div>
   }
@@ -57,7 +57,7 @@ export function Live2dViewer({ view, t }: { view: ArtifactView; t: Translate }) 
       </Slot>
       <div className="dsh-canvas-media">
         {editing ? (
-          <Live2dEditor
+          <Skeleton2dEditor
             projectId={chrome.projectId}
             cardId={chrome.cardId}
             bridge={chrome.bridge}
@@ -68,16 +68,16 @@ export function Live2dViewer({ view, t }: { view: ArtifactView; t: Translate }) 
             t={t}
           />
         ) : (
-          <Live2dAnimation model={load.model} textureUrl={textureUrl} className="dsh-canvas-live2d-view" />
+          <Skeleton2dAnimation model={load.model} textureUrl={textureUrl} className="dsh-canvas-skeleton2d-view" />
         )}
       </div>
     </>
   )
 }
 
-/** 注册项：认领 `live2d` 一个 kind。payload 是 JSON + 贴图，编辑面是参数面板不是文本。 */
-export const live2dViewer: ViewerRegistration = {
-  id: 'live2d',
-  component: Live2dViewer,
-  claims: (kind) => kind === 'live2d',
+/** 注册项：认领 `skeleton2d` 一个 kind。payload 是 JSON + 贴图，编辑面是参数面板不是文本。 */
+export const skeleton2dViewer: ViewerRegistration = {
+  id: 'skeleton2d',
+  component: Skeleton2dViewer,
+  claims: (kind) => kind === 'skeleton2d',
 }

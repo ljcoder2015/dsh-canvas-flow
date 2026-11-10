@@ -1,5 +1,5 @@
 /**
- * dsh-canvas — live2d-lite 的**骨骼数据出口**：DragonBones 5.5（纯，零依赖）。
+ * dsh-canvas — skeleton2d-lite 的**骨骼数据出口**：DragonBones 5.5（纯，零依赖）。
  *
  * 为什么是 DragonBones 而不是 Spine：Spine 的运行时许可绑在编辑器上（要拿到 Spine 授权
  * 才能合法分发运行时），而 DragonBones 的 JSON 格式与运行时都是开源、且微信小游戏官方
@@ -15,20 +15,20 @@
  * - 顶点按 `slotPose`（槽的世界矩阵，这里取单位矩阵：槽挂在原点的根骨上）变换后，再被
  *   每根骨的绑定矩阵求逆，得到「骨内坐标」——运行时用**动画中的**骨矩阵乘回去，正是
  *   `bones.ts` 的 `skinAt` 那套线性混合蒙皮。两边的算术因此逐点一致（判据钉在
- *   `tests/core/live2d/dragonbones.spec.ts`：从导出的 JSON 反算顶点，与 `poseAt` 比对）；
+ *   `tests/core/skeleton2d/dragonbones.spec.ts`：从导出的 JSON 反算顶点，与 `poseAt` 比对）；
  * - 动画逐帧烘成 `rotateFrame`（度），`duration` = 帧数，`playTimes: 0` 循环——与雪碧图
  *   同一条「正弦整周期」的无缝性质，循环处没有跳变。
  *
  * **骨架只装骨骼能表达的那一半**：呼吸 / 摇摆 / 倾头 / 网格雕刻不是骨骼驱动的（它们按
  * 顶点权重连续衰减），而 DragonBones 的网格顶点动画（FFD）各家运行时实现不一、且会被
  * 骨骼动画二次叠加——烘进去只会得到「看起来像但不完全一样」的东西。所以这里只导出骨骼
- * 与骨骼曲线，**要逐像素一致的动画请用雪碧图那条**（`live2d-export.ts` 的另一支）。
+ * 与骨骼曲线，**要逐像素一致的动画请用雪碧图那条**（`skeleton2d-export.ts` 的另一支）。
  *
  * 本模块是纯的：不碰 canvas、不碰文件，输入模型与贴图尺寸，输出两份 JSON 的内容。
  */
 
 import { boneRotationAt, boneWeightsAt } from './bones.ts'
-import type { Live2dModel } from './model.ts'
+import type { Skeleton2dModel } from './model.ts'
 import { GRID_COLS, GRID_ROWS, gridIndices } from './rig.ts'
 
 /** 写进 JSON 的格式版本：运行时认 4.0 / 4.5 / 5.0 / 5.5，5.5 是当前的默认。 */
@@ -96,7 +96,7 @@ export function armatureNameOf(stem: string): string {
  * 没有骨骼就返回 `undefined`：这份文件的意义全在骨架，没骨架导出来是一张静态图，
  * 不如让调用方直说「先在骨骼模式绑几个关节」。
  */
-export function dragonBonesPackOf(model: Live2dModel, size: DragonBonesSize, stem: string): DragonBonesPack | undefined {
+export function dragonBonesPackOf(model: Skeleton2dModel, size: DragonBonesSize, stem: string): DragonBonesPack | undefined {
   const bones = model.bones
   if (bones === undefined || bones.length === 0) return undefined
   const width = Math.max(1, Math.round(size.width))

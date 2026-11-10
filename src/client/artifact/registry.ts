@@ -26,7 +26,7 @@ import { dataViewer } from './viewers/data-viewer.tsx'
 import { deckViewer } from './viewers/deck-viewer.tsx'
 import { designViewer } from './viewers/design/design-viewer.tsx'
 import { audioViewer, imageViewer, videoViewer } from './viewers/media-viewer.tsx'
-import { live2dViewer } from './viewers/live2d/live2d-viewer.tsx'
+import { skeleton2dViewer } from './viewers/skeleton2d/skeleton2d-viewer.tsx'
 import { markdownViewer } from './viewers/markdown-viewer.tsx'
 import { textViewer } from './viewers/text-viewer.tsx'
 import type { ViewerId, ViewerRegistration } from './viewers/types.ts'
@@ -45,7 +45,7 @@ export const VIEWER_REGISTRY: readonly ViewerRegistration[] = [
   dataViewer,
   videoViewer,
   audioViewer,
-  live2dViewer,
+  skeleton2dViewer,
   deckViewer,
   designViewer,
   textViewer,

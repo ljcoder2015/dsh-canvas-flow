@@ -15,11 +15,11 @@
  * 读；处理函数由调用方（画布那侧）注入——于是这一整套判据在 node 里就能穷举，不需要一个
  * React，也不需要真的导出一份东西。
  */
-import { isBundleKind, isDesignKind, isDirectTextKind, isLive2dKind, isMediaKind, kindById } from '../../../core/artifact/kind/kind-registry.ts'
+import { isBundleKind, isDesignKind, isDirectTextKind, isSkeleton2dKind, isMediaKind, kindById } from '../../../core/artifact/kind/kind-registry.ts'
 import type { ExportFormat } from '../../../types.ts'
 import type { CanvasKey } from '../../ui/locales.ts'
 import { DESIGN_EXPORT_FORMATS, DESIGN_EXPORT_LABEL, type DesignExportFormat } from './design-export.ts'
-import { LIVE2D_EXPORT_FORMATS, LIVE2D_EXPORT_LABEL, type Live2dExportFormat } from './live2d-export.ts'
+import { SKELETON2D_EXPORT_FORMATS, SKELETON2D_EXPORT_LABEL, type Skeleton2dExportFormat } from './skeleton2d-export.ts'
 import { TEXT_EXPORT_FORMATS, TEXT_EXPORT_LABEL, type TextExportFormat } from './text-export.ts'
 
 /** 菜单里的一行：叫什么、点下去做什么。 */
@@ -37,7 +37,7 @@ export interface ExportRow<F extends string = string> {
  * **菜单**（格式由用户点的那一行给）。
  *
  * 菜单那三种是「没有哪个格式能当默认」的形态——文本节点的四种文本格式、设计稿的四条出路、
- * live2d 卡的两种烘法，替用户猜一个就是把另外几样藏起来。一击那三种是「只有一件事可做」
+ * skeleton2d 卡的两种烘法，替用户猜一个就是把另外几样藏起来。一击那三种是「只有一件事可做」
  * 的形态：应用节点（整份产物一个包）、**媒体节点**（把产物原样下载，不转换——转换是把
  * 用户手里那一份换成另一份，不是他要的），以及其余形态（格式由类型表写死，从 v1.0 起
  * 就是这个样子）。
@@ -64,8 +64,8 @@ export interface ExportHandlers {
   design: (format: DesignExportFormat) => void
   /** 媒体节点（图片 / 视频 / 音频）：产物原样下载，格式就是它自己的格式。 */
   media: () => void
-  /** Live2D 节点：帧序列雪碧图，或 DragonBones 骨架包（两份都是客户端烘出来的）。 */
-  live2d: (format: Live2dExportFormat) => void
+  /** Skeleton2D 节点：帧序列雪碧图，或 DragonBones 骨架包（两份都是客户端烘出来的）。 */
+  skeleton2d: (format: Skeleton2dExportFormat) => void
 }
 
 /** 一个形态点导出之后的样子。 */
@@ -91,17 +91,17 @@ export function exportOfferOf(kind: string, handlers: ExportHandlers): ExportOff
   // `png / svg`，那是**部署能力那条线**能把它转成什么（`canvas_export` 工具用的就是这一格），
   // 而不是这枚按钮该做的事。媒体卡的产物已经是一个文件，导出的正确含义是原样拿走——所以
   // 这条分派看的是「它是不是媒体」，不是「它能不能被转换」。
-  // Live2D **先于**媒体那条：它不是媒体（产物是 JSON + 贴图，「原样下载」对它意味着
+  // Skeleton2D **先于**媒体那条：它不是媒体（产物是 JSON + 贴图，「原样下载」对它意味着
   // 交出去一串引擎读不懂的模型），它自己的那条路是客户端烘——与文本、设计同一条
   // 「浏览器里做得了的事，不走部署」的道理。
   //
   // 而它是**菜单**不是一击：两条出路给的东西不一样（雪碧图逐像素一致、骨架包可编辑），
   // 替用户挑一个就是把另一个藏起来——和文本四种格式、设计四条出路同一个判断。
-  if (isLive2dKind(kind)) {
+  if (isSkeleton2dKind(kind)) {
     return {
       kind: 'menu',
-      menu: 'canvas.export.menuLive2d',
-      rows: rowsOf(LIVE2D_EXPORT_FORMATS, LIVE2D_EXPORT_LABEL, handlers.live2d),
+      menu: 'canvas.export.menuSkeleton2d',
+      rows: rowsOf(SKELETON2D_EXPORT_FORMATS, SKELETON2D_EXPORT_LABEL, handlers.skeleton2d),
     }
   }
   if (isMediaKind(kind)) return { kind: 'one', run: handlers.media }

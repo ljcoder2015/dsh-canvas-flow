@@ -1,5 +1,5 @@
 /**
- * dsh-canvas — live2d-lite → DragonBones 骨架数据的判据。
+ * dsh-canvas — skeleton2d-lite → DragonBones 骨架数据的判据。
  *
  * 这一份钉的是**文件里那串数字的含义**，不是「有没有生成一个 JSON」：导出的骨架要能被
  * DragonBones 的运行时读懂，而懂的意思是——权重、绑定姿态、骨骼动画三者合起来复原出的
@@ -17,7 +17,7 @@
  *    这样引擎里播完一圈回到第 0 帧是连续的。
  *
  * 副动作（呼吸 / 摇摆 / 倾头 / 雕刻）**刻意不在这份文件里**，所以这里的模型把它们全设成
- * 0：骨架那条路只承诺骨骼这一层，逐像素一致是雪碧图那条的承诺（`live2d-export.ts`）。
+ * 0：骨架那条路只承诺骨骼这一层，逐像素一致是雪碧图那条的承诺（`skeleton2d-export.ts`）。
  */
 import { describe, expect, it } from 'vitest'
 import {
@@ -27,17 +27,17 @@ import {
   DRAGONBONES_ROOT,
   armatureNameOf,
   dragonBonesPackOf,
-} from '../../../src/core/live2d/dragonbones.ts'
-import { LIVE2D_FORMAT, normalizeLive2dModel, type Live2dModel } from '../../../src/core/live2d/model.ts'
-import { poseAt } from '../../../src/core/live2d/rig.ts'
+} from '../../../src/core/skeleton2d/dragonbones.ts'
+import { SKELETON2D_FORMAT, normalizeSkeleton2dModel, type Skeleton2dModel } from '../../../src/core/skeleton2d/model.ts'
+import { poseAt } from '../../../src/core/skeleton2d/rig.ts'
 
 const WIDTH = 1024
 const HEIGHT = 1024
 
 /** 一份绑好骨的模型：三根骨成链 + 一根旁枝，副动作全关（骨架只承诺骨骼那一层）。 */
-function rigged(overrides: Record<string, unknown> = {}): Live2dModel {
-  return normalizeLive2dModel({
-    format: LIVE2D_FORMAT,
+function rigged(overrides: Record<string, unknown> = {}): Skeleton2dModel {
+  return normalizeSkeleton2dModel({
+    format: SKELETON2D_FORMAT,
     texture: '少女.png',
     loop: 4.8,
     motions: {
@@ -56,7 +56,7 @@ function rigged(overrides: Record<string, unknown> = {}): Live2dModel {
       head: { rot: [{ t: 0, v: 0 }, { t: 0.5, v: 1 }, { t: 0.9, v: -0.5 }] },
     },
     ...overrides,
-  }) as Live2dModel
+  }) as Skeleton2dModel
 }
 
 interface SkeletonJson {
@@ -93,7 +93,7 @@ interface SkeletonJson {
 }
 
 /** 取骨架那份 JSON（判据里到处要用，写一次）。 */
-function skeletonOf(model: Live2dModel, width = WIDTH, height = HEIGHT): SkeletonJson {
+function skeletonOf(model: Skeleton2dModel, width = WIDTH, height = HEIGHT): SkeletonJson {
   const pack = dragonBonesPackOf(model, { width, height }, '少女 01')
   expect(pack).toBeDefined()
   return pack?.skeleton as unknown as SkeletonJson

@@ -77,12 +77,12 @@ import { siblingPathOf } from '../../core/canvas/card/sibling-path.ts'
 import {
   DEFAULT_LOOP_SECONDS,
   DEFAULT_MOTIONS,
-  LIVE2D_FORMAT,
-  LIVE2D_VERSION,
+  SKELETON2D_FORMAT,
+  SKELETON2D_VERSION,
   defaultTexturePathOf,
-  serializeLive2dModel,
+  serializeSkeleton2dModel,
   textureReferenceOf,
-} from '../../core/live2d/model.ts'
+} from '../../core/skeleton2d/model.ts'
 import { artifactFolderPathOf, artifactPathOf } from '../../core/canvas/project/artifact-folders.ts'
 import { materialUpstreams } from '../../core/canvas/board/source-store.ts'
 import type { BoardFile } from './board-file.ts'
@@ -1617,7 +1617,10 @@ export class CardRuntime extends TypertRemoteService {
   }
 
   /**
-   * Generate a live2d-lite model artifact for one card (`canvas_generate_live2d`).
+   * Generate a skeleton2d model artifact for one card (`canvas_generate_skeleton2d`).
+   *
+   * 产物是「一份 JSON + 一张贴图」：贴图来自引用（不复制）或现场生图；分层与骨架由
+   * 客户端打开时自动补上（`autoRig` 标记），因为切图要读像素、而宿主侧没有图像解码。
    *
    * 这张卡的产物是**一份 JSON**，但它不是「从文本生成的文本」——它包着一张贴图。贴图
    * 两个来源，二选一：
@@ -1632,7 +1635,7 @@ export class CardRuntime extends TypertRemoteService {
    * 的生成模型传下去——这三件事是「一次生成落进一张卡」的全部内容，写第二遍就是第二份
    * 会漂移的实现。
    */
-  async generateLive2d(
+  async generateSkeleton2d(
     project: Project,
     cardId: CardId,
     prompt: string,
@@ -1646,15 +1649,18 @@ export class CardRuntime extends TypertRemoteService {
         if (generate === undefined) throw new Error(UNSUPPORTED_IMAGE)
         await generate({ project, file: texturePath, prompt, ...(model === undefined ? {} : { model }) }, signal)
       }
-      const artifact = serializeLive2dModel({
-        format: LIVE2D_FORMAT,
-        version: LIVE2D_VERSION,
+      const artifact = serializeSkeleton2dModel({
+        format: SKELETON2D_FORMAT,
+        version: SKELETON2D_VERSION,
         texture: textureReferenceOf(file, texturePath),
         loop: DEFAULT_LOOP_SECONDS,
         anchor: { x: 0.5, y: 1 },
         breath: { ...DEFAULT_MOTIONS.breath },
         sway: { ...DEFAULT_MOTIONS.sway },
         tilt: { ...DEFAULT_MOTIONS.tilt },
+        // 自动分层留给客户端：分层要读像素，宿主没有解码依赖；标记随模型落盘，编辑器
+        // 一打开就跑一次（`skeleton2d-autorig.ts`），跑完标记消失。
+        autoRig: true,
         prompt,
       })
       await this.deps.io.write(project.root, file, artifact, undefined, signal)

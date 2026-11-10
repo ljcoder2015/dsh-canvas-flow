@@ -1,5 +1,5 @@
 /**
- * dsh-canvas — live2d-lite 骨骼层的判据。
+ * dsh-canvas — skeleton2d-lite 骨骼层的判据。
  *
  * 钉四件事：
  * 1. **层级合成**：父动子随——子骨原点绕父骨**世界原点**转父角，角度是整条链的累加；
@@ -10,9 +10,9 @@
  *    逐点一致——舞台、卡面、导出三处靠的就是这一条。
  */
 import { describe, expect, it } from 'vitest'
-import { BONE_ROT_MAX, bonePosesAt, boneRotationAt, boneWeightsAt, skinAt } from '../../../src/core/live2d/bones.ts'
-import { LIVE2D_FORMAT, normalizeLive2dModel, type Live2dModel } from '../../../src/core/live2d/model.ts'
-import { GRID_COLS, GRID_ROWS, baseGrid, poseAt, poseGridAt } from '../../../src/core/live2d/rig.ts'
+import { BONE_ROT_MAX, bonePosesAt, boneRotationAt, boneWeightsAt, skinAt } from '../../../src/core/skeleton2d/bones.ts'
+import { SKELETON2D_FORMAT, normalizeSkeleton2dModel, type Skeleton2dModel } from '../../../src/core/skeleton2d/model.ts'
+import { GRID_COLS, GRID_ROWS, baseGrid, poseAt, poseGridAt } from '../../../src/core/skeleton2d/rig.ts'
 
 /** 一条两节的骨链：hip 在胯，chest 在胸口（挂在 hip 下）。 */
 const CHAIN = [
@@ -26,8 +26,8 @@ const FULL = [
   { t: 0.5, v: 1 },
 ]
 
-const MODEL: Live2dModel = normalizeLive2dModel({
-  format: LIVE2D_FORMAT,
+const MODEL: Skeleton2dModel = normalizeSkeleton2dModel({
+  format: SKELETON2D_FORMAT,
   texture: '少女.png',
   motions: {
     breath: { cycles: 2, amplitude: 0.02, phase: 0 },

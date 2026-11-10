@@ -1,8 +1,8 @@
 /**
- * dsh-canvas — live2d-lite 的**骨骼层**（纯，零依赖）。
+ * dsh-canvas — skeleton2d-lite 的**骨骼层**（纯，零依赖）。
  *
  * 骨骼是网格变形之外的第二个变形来源：一组带父级关系的关节（`model.ts` 的
- * `Live2dBone`），每根关节可以绕自己的原点旋转（关键帧驱动，`boneTracks`）。顶点不
+ * `Skeleton2dBone`），每根关节可以绕自己的原点旋转（关键帧驱动，`boneTracks`）。顶点不
  * 绑死在某根骨骼上——按「到各关节距离的平方反比」分给最近的两根（蒙皮），这样一根
  * 手臂骨转动时，附近的像素跟着走、远处的像素几乎不动，不需要逐顶点刷权重。
  *
@@ -13,7 +13,7 @@
  * 那边把这三样按「贴图 rest → 骨骼 → 动作 → 雕刻」的次序叠起来，次序只写那一遍。
  */
 
-import type { Live2dKeyframe } from './model.ts'
+import type { Skeleton2dKeyframe } from './model.ts'
 import { sampleKeys } from './curve.ts'
 
 /** 单根骨骼旋转的满幅（弧度）：v=±1 的关键帧对应 ±0.4rad ≈ ±23°——再大就是甩胳膊了。 */
@@ -23,7 +23,7 @@ export const BONE_ROT_MAX = 0.4
 export const MAX_BONES = 12
 
 /** 一根骨骼在时刻 t 的世界姿态：原点（uv）与累计旋转（弧度，含全部父级）。 */
-export interface Live2dBonePose {
+export interface Skeleton2dBonePose {
   ox: number
   oy: number
   angle: number
@@ -35,7 +35,7 @@ export interface Live2dBonePose {
  * 没有关键帧（不足两键）就是静止——骨骼不铺曲线就停在 rest 位，铺了才动。曲线本身
  * 走 `sampleKeys` 的环绕余弦：无缝循环与动作层同一扇门。
  */
-export function boneRotationAt(rot: readonly Live2dKeyframe[] | undefined, t: number, loop: number): number {
+export function boneRotationAt(rot: readonly Skeleton2dKeyframe[] | undefined, t: number, loop: number): number {
   if (rot === undefined || rot.length < 2) return 0
   return sampleKeys(rot, t / loop) * BONE_ROT_MAX
 }
@@ -52,11 +52,11 @@ export function boneRotationAt(rot: readonly Live2dKeyframe[] | undefined, t: nu
  */
 export function bonePosesAt(
   bones: readonly { name: string; x: number; y: number; parent?: string }[],
-  tracks: Readonly<Record<string, { rot?: Live2dKeyframe[] }>> | undefined,
+  tracks: Readonly<Record<string, { rot?: Skeleton2dKeyframe[] }>> | undefined,
   t: number,
   loop: number,
-): Live2dBonePose[] {
-  const poses: Live2dBonePose[] = []
+): Skeleton2dBonePose[] {
+  const poses: Skeleton2dBonePose[] = []
   for (let index = 0; index < bones.length; index += 1) {
     const bone = bones[index] as { name: string; x: number; y: number; parent?: string }
     const local = boneRotationAt(tracks?.[bone.name]?.rot, t, loop)
@@ -66,7 +66,7 @@ export function bonePosesAt(
       poses.push({ ox: bone.x, oy: bone.y, angle: local })
       continue
     }
-    const parent = poses[parentIndex] as Live2dBonePose
+    const parent = poses[parentIndex] as Skeleton2dBonePose
     const rest = bones[parentIndex] as { x: number; y: number }
     const rx = bone.x - rest.x
     const ry = bone.y - rest.y
@@ -91,34 +91,51 @@ export function boneWeightsAt(
   bones: readonly { x: number; y: number }[],
   u: number,
   v: number,
+  allowed?: readonly number[],
 ): number[] {
   const weights = new Array<number>(bones.length).fill(0)
   if (bones.length === 0) return weights
+  // 一层可以只绑几根骨（`layer.bones`）：候选先收紧，权重再在候选里分。
+  const candidates = allowed === undefined ? bones.map((_, index) => index) : allowed.filter((index) => index >= 0 && index < bones.length)
+  if (candidates.length === 0) return weights
   // ε 防除零，也让「骑在关节上」的顶点不至于权重爆炸。
-  const scores = bones.map((bone) => {
+  const scoreOf = (index: number): number => {
+    const bone = bones[index] as { x: number; y: number }
     const du = u - bone.x
     const dv = v - bone.y
     return 1 / (du * du + dv * dv + 0.0025)
-  })
-  if (bones.length === 1) {
-    weights[0] = 1
+  }
+  if (candidates.length === 1) {
+    weights[candidates[0] as number] = 1
     return weights
   }
   // 最近的两根。n ≤ 12，直接扫两遍比排序省心。
-  let first = 0
-  for (let index = 1; index < scores.length; index += 1) {
-    if ((scores[index] as number) > (scores[first] as number)) first = index
+  let first = candidates[0] as number
+  let firstScore = scoreOf(first)
+  for (const index of candidates) {
+    const score = scoreOf(index)
+    if (score > firstScore) {
+      first = index
+      firstScore = score
+    }
   }
-  let second = first === 0 ? 1 : 0
-  for (let index = 0; index < scores.length; index += 1) {
+  let second = -1
+  let secondScore = Number.NEGATIVE_INFINITY
+  for (const index of candidates) {
     if (index === first) continue
-    if ((scores[index] as number) > (scores[second] as number)) second = index
+    const score = scoreOf(index)
+    if (score > secondScore) {
+      second = index
+      secondScore = score
+    }
   }
-  const a = scores[first] as number
-  const b = scores[second] as number
-  const total = a + b
-  weights[first] = a / total
-  weights[second] = b / total
+  if (second < 0) {
+    weights[first] = 1
+    return weights
+  }
+  const total = firstScore + secondScore
+  weights[first] = firstScore / total
+  weights[second] = secondScore / total
   return weights
 }
 
@@ -131,7 +148,7 @@ export function boneWeightsAt(
  */
 export function skinAt(
   bones: readonly { x: number; y: number }[],
-  poses: readonly Live2dBonePose[],
+  poses: readonly Skeleton2dBonePose[],
   weights: readonly number[],
   su: number,
   sv: number,
@@ -141,7 +158,7 @@ export function skinAt(
   for (let index = 0; index < bones.length; index += 1) {
     const w = weights[index] ?? 0
     if (w === 0) continue
-    const pose = poses[index] as Live2dBonePose
+    const pose = poses[index] as Skeleton2dBonePose
     const rest = bones[index] as { x: number; y: number }
     const dx = su - rest.x
     const dy = sv - rest.y

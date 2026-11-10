@@ -39,12 +39,12 @@ export const KIND_TAB_PREFIX = 'dsh-canvas:kind:'
  * Kinds whose addresses the canvas will claim.
  *
  * 媒体那三个（`image` / `video` / `audio`）**从 `MEDIA_KINDS` 摊开**，不在这里再重写一遍。
- * live2d 不在 `MEDIA_KINDS` 里（它的产物是 JSON + 贴图，不是一段媒体字节），所以单独
+ * skeleton2d 不在 `MEDIA_KINDS` 里（它的产物是 JSON + 贴图，不是一段媒体字节），所以单独
  * 列一个名字——认领清单少一个 kind 的表现是那张卡在右栏落到内置查看器上，而 host 那侧
- * 的形态认定明明是 `live2d`：同一个文件两边各说各话（`audio` 当年就是这么漏的）。
+ * 的形态认定明明是 `skeleton2d`：同一个文件两边各说各话（`audio` 当年就是这么漏的）。
  * 同一条规矩 §十一 已经写过一次：kind 清单只有 `kind-registry.ts` 一份真源。
  */
-const CLAIMABLE = new Set<string>(['app', 'markdown', 'data', 'live2d', ...MEDIA_KINDS])
+const CLAIMABLE = new Set<string>(['app', 'markdown', 'data', 'skeleton2d', ...MEDIA_KINDS])
 
 /** The kinds this package claims addresses for. */
 function claimedKinds(): readonly KindDefinition[] {

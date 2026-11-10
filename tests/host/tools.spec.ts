@@ -72,7 +72,7 @@ interface Harness {
   /** Project ids the board was read for, in call order. */
   boards: string[]
   /** 每一次生成拿到的参考图（按调用顺序），以及视频那一路的完整 options。 */
-  generated: { image: (string | undefined)[]; video: Record<string, unknown>[]; live2d: (string | undefined)[] }
+  generated: { image: (string | undefined)[]; video: Record<string, unknown>[]; skeleton2d: (string | undefined)[] }
 }
 
 /**
@@ -92,7 +92,7 @@ function harness(
 ): Harness {
   const tools = new Map<string, ToolDefinition>()
   const boards: string[] = []
-  const generated: Harness['generated'] = { image: [], video: [], live2d: [] }
+  const generated: Harness['generated'] = { image: [], video: [], skeleton2d: [] }
   const card = options.card
   const board = options.board
 
@@ -201,9 +201,9 @@ function harness(
         return { ok: true, path: '/tmp/flow-test/clip.mp4', reason: '' }
       },
       generateAudio: async () => ({ ok: true, path: '/tmp/flow-test/voice.mp3', reason: '' }),
-      generateLive2d: async (_project: unknown, _cardId: unknown, _prompt: unknown, referencePath?: string) => {
-        generated.live2d.push(referencePath)
-        return { ok: true, path: '/tmp/flow-test/cat.live2d.json', reason: '' }
+      generateSkeleton2d: async (_project: unknown, _cardId: unknown, _prompt: unknown, referencePath?: string) => {
+        generated.skeleton2d.push(referencePath)
+        return { ok: true, path: '/tmp/flow-test/cat.skeleton2d.json', reason: '' }
       },
       exportCard: async () => ({ ok: true, path: '/tmp/flow-test/deck.pdf', reason: '' }),
       publishCard: async () => ({ ok: true, path: 'https://deck.example.test', reason: '' }),
@@ -249,7 +249,7 @@ const ARGS: Record<string, unknown> = {
   [TOOL_NAMES.generateImage]: { prompt: 'a cover', cardId: 'hero.png' },
   [TOOL_NAMES.generateVideo]: { prompt: '镜头缓缓拉出', cardId: 'clip.mp4', ratio: '16:9', duration: 5 },
   [TOOL_NAMES.generateAudio]: { prompt: '雨夜便利店，两个人压低声音争吵', cardId: 'voice.mp3' },
-  [TOOL_NAMES.generateLive2d]: { prompt: '一只圆滚滚的橘猫', cardId: 'cat.live2d.json' },
+  [TOOL_NAMES.generateSkeleton2d]: { prompt: '一只圆滚滚的橘猫', cardId: 'cat.skeleton2d.json' },
   [TOOL_NAMES.designRead]: {},
   [TOOL_NAMES.designEdit]: {
     ops: [{ kind: 'upsert', type: 'rect', x: 10, y: 10, width: 120, height: 80, fill: '#6B4226' }],
@@ -364,22 +364,22 @@ describe('canvas tools — 引用即参考图', () => {
     expect((value as { note: string }).note).toContain('other')
   })
 
-  it('Live2D 卡引用了一张图片：那张图作为贴图交给生成，不重新画', async () => {
+  it('Skeleton2D 卡引用了一张图片：那张图作为贴图交给生成，不重新画', async () => {
     // 板上带着引用边的是 `clip` ← `图片.png`（与视频那条同一张板）——引用规则对
-    // live2d 是同一条：连了线就把那张图当材料。
+    // skeleton2d 是同一条：连了线就把那张图当材料。
     const h = harness({ board: REFERENCED_BOARD, activeProject: PROJECT.id })
     await h.tools
-      .get(TOOL_NAMES.generateLive2d)
+      .get(TOOL_NAMES.generateSkeleton2d)
       ?.execute({ prompt: '让它活起来', cardId: 'clip' }, exec('cv-1'))
-    expect(h.generated.live2d[0]).toBe('图片.png')
+    expect(h.generated.skeleton2d[0]).toBe('图片.png')
   })
 
-  it('Live2D 卡没有引用：贴图路径是 undefined（由运行时自己画一张）', async () => {
+  it('Skeleton2D 卡没有引用：贴图路径是 undefined（由运行时自己画一张）', async () => {
     const h = harness({ board: REFERENCED_BOARD, activeProject: PROJECT.id })
     await h.tools
-      .get(TOOL_NAMES.generateLive2d)
+      .get(TOOL_NAMES.generateSkeleton2d)
       ?.execute({ prompt: '一只鲸鱼', cardId: 'whale' }, exec('cv-1'))
-    expect(h.generated.live2d[0]).toBeUndefined()
+    expect(h.generated.skeleton2d[0]).toBeUndefined()
   })
 })
 

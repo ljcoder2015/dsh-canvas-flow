@@ -1,15 +1,15 @@
 /**
- * dsh-canvas — live2d 编辑器网格模式的判据。
+ * dsh-canvas — skeleton2d 编辑器网格模式的判据。
  *
  * 拾取与拖拽是编辑器的手感所在：点偏了抓不到、抓住了拖不动、拖出去越了界，任何一条
  * 出问题用户都会说「这个编辑器没法用」。这里的判据按真实交互形态写——点击落点、
  * 贴合盒、位移上限，都是真机传进来的形状。
  */
 import { describe, expect, it } from 'vitest'
-import { DEFORM_MAX } from '../../../src/core/live2d/model.ts'
-import { GRID_COLS, GRID_ROWS } from '../../../src/core/live2d/rig.ts'
-import { containLayout } from '../../../src/client/artifact/viewers/live2d/live2d-editor-layout.ts'
-import { dragOffset, isZeroOffset, nearestVertex, vertexPixel } from '../../../src/client/artifact/viewers/live2d/live2d-mesh.ts'
+import { DEFORM_MAX } from '../../../src/core/skeleton2d/model.ts'
+import { GRID_COLS, GRID_ROWS } from '../../../src/core/skeleton2d/rig.ts'
+import { containLayout } from '../../../src/client/artifact/viewers/skeleton2d/skeleton2d-editor-layout.ts'
+import { dragOffset, isZeroOffset, nearestVertex, vertexPixel } from '../../../src/client/artifact/viewers/skeleton2d/skeleton2d-mesh.ts'
 
 /** 一个 400×300 的编辑台，贴图 1:1——贴合盒就是正中 300×300。 */
 const BOX = containLayout(1, 400, 300)

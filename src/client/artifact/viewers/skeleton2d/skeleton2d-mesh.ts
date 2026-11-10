@@ -1,18 +1,18 @@
 /**
- * dsh-canvas — live2d 编辑器**网格模式**的纯算术（零依赖、零 React）。
+ * dsh-canvas — skeleton2d 编辑器**网格模式**的纯算术（零依赖、零 React）。
  *
  * 网格模式把编辑台变成 Cubism Editor 的顶点编辑：贴图上铺开 25×25 个网格顶点，拖哪个
  * 哪个就带着贴图走，位移存进模型的 `deform.offsets`（顶点序号 → uv 位移）。这段算术
- * 只有屏幕像素 ↔ 贴图 uv 的换算和拾取——变形数学本体在 `core/live2d/rig.ts`，这里
+ * 只有屏幕像素 ↔ 贴图 uv 的换算和拾取——变形数学本体在 `core/skeleton2d/rig.ts`，这里
  * 不碰顶点，只认屏幕。
  *
- * 坐标约定与 `live2d-editor-layout.ts` 同一条：uv（0–1，y 向下），贴合盒由
+ * 坐标约定与 `skeleton2d-editor-layout.ts` 同一条：uv（0–1，y 向下），贴合盒由
  * {@link containLayout} 给出。
  */
 
-import { GRID_COLS, GRID_ROWS } from '../../../../core/live2d/rig.ts'
-import type { Live2dModel } from '../../../../core/live2d/model.ts'
-import type { ContainBox } from './live2d-editor-layout.ts'
+import { GRID_COLS, GRID_ROWS } from '../../../../core/skeleton2d/rig.ts'
+import type { Skeleton2dModel } from '../../../../core/skeleton2d/model.ts'
+import type { ContainBox } from './skeleton2d-editor-layout.ts'
 
 /** 拾取半径（像素）：鼠标到顶点中心不超过这个距离算「抓住了」。网格 24 格在 300px 的
  *  贴合盒里是 12.5px 一格，半径 8 意味着格胞正中是真空——点空白处不会有任何反应。 */
@@ -80,7 +80,7 @@ export function isZeroOffset(offset: [number, number]): boolean {
 export function drawMeshOverlay(
   ctx: CanvasRenderingContext2D,
   box: ContainBox,
-  model: Live2dModel,
+  model: Skeleton2dModel,
   highlight: { col: number; row: number } | undefined,
   cols = GRID_COLS,
   rows = GRID_ROWS,

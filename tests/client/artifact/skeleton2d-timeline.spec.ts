@@ -1,12 +1,12 @@
 /**
- * dsh-canvas — live2d 编辑器时间线模式的判据。
+ * dsh-canvas — skeleton2d 编辑器时间线模式的判据。
  *
  * 布局与坐标换算是时间线全部的算术：轨道等高不重叠、时间/取值与像素来回换算不失真、
  * 键的命中半径内抓得住。曲线形状本身不在判据里——它与渲染器共用 `motionValueAt`
  * （rig.spec 钉过），画出来的必然是算出来的那条线。
  */
 import { describe, expect, it } from 'vitest'
-import type { Live2dKeyframe } from '../../../src/core/live2d/model.ts'
+import type { Skeleton2dKeyframe } from '../../../src/core/skeleton2d/model.ts'
 import {
   RULER_HEIGHT,
   nearestKey,
@@ -16,7 +16,7 @@ import {
   valueToY,
   xToTime,
   yToValue,
-} from '../../../src/client/artifact/viewers/live2d/live2d-timeline.ts'
+} from '../../../src/client/artifact/viewers/skeleton2d/skeleton2d-timeline.ts'
 
 describe('轨道布局', () => {
   const rects = trackRects(3, 150)
@@ -63,7 +63,7 @@ describe('坐标换算', () => {
 
 describe('键的命中测试', () => {
   const rect = { top: 0, height: 40 }
-  const keys: Live2dKeyframe[] = [
+  const keys: Skeleton2dKeyframe[] = [
     { t: 0.2, v: 0.5 },
     { t: 0.8, v: -0.5 },
   ]

@@ -1,5 +1,5 @@
 /**
- * dsh-canvas — live2d 卡的编辑器（全屏预览器的「编辑」那一面）。
+ * dsh-canvas — skeleton2d 卡的编辑器（全屏预览器的「编辑」那一面）。
  *
  * 四种模式（对照 Cubism Editor 的四块工作区）：
  *
@@ -11,10 +11,10 @@
  * - **时间线**：三组动作各一条轨道，键加在轨道上就是关键帧驱动，余弦插值、环绕无缝
  *   （Cubism 的动画工作区）。有键的动作拍数 / 相位退位，幅度照旧缩放整条曲线。
  *
- * 保存走防抖自动写：改动停手 600ms 落盘一次，写回的就是产物本体（`serializeLive2dModel`
+ * 保存走防抖自动写：改动停手 600ms 落盘一次，写回的就是产物本体（`serializeSkeleton2dModel`
  * 的稳定序列化 → 桥上的 `writeText`）。卸载即冲刷——防抖窗口不是丢数据窗口。
  *
- * 时间线的播放头与画面共用同一只钟（`Live2dAnimation` 的 `clockRef`，每帧写、不触发
+ * 时间线的播放头与画面共用同一只钟（`Skeleton2dAnimation` 的 `clockRef`，每帧写、不触发
  * 渲染）；网格与时间线的坐标换算、拾取、绘制是纯函数，判据在各自的 spec 里。
  */
 
@@ -22,19 +22,20 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ArtifactView } from '../../../../types.ts'
 import {
   DEFORM_MAX,
-  serializeLive2dModel,
-  type Live2dBone,
-  type Live2dKeyframe,
-  type Live2dModel,
-  type Live2dMotion,
-} from '../../../../core/live2d/model.ts'
-import { motionValueAt } from '../../../../core/live2d/rig.ts'
-import { BONE_ROT_MAX, boneRotationAt } from '../../../../core/live2d/bones.ts'
+  serializeSkeleton2dModel,
+  type Skeleton2dBone,
+  type Skeleton2dKeyframe,
+  type Skeleton2dModel,
+  type Skeleton2dMotion,
+} from '../../../../core/skeleton2d/model.ts'
+import { motionValueAt } from '../../../../core/skeleton2d/rig.ts'
+import { BONE_ROT_MAX, boneRotationAt } from '../../../../core/skeleton2d/bones.ts'
 import type { Translate } from '../../../ui/locales.ts'
-import { Live2dAnimation, invalidateLive2dModel } from './use-live2d.tsx'
-import { anchorFromPoint, containLayout } from './live2d-editor-layout.ts'
-import { drawMeshOverlay, dragOffset, isZeroOffset, nearestVertex } from './live2d-mesh.ts'
-import { boneUVFromPoint, drawBonesOverlay, nearestBone, nextBoneName } from './live2d-bones.ts'
+import { Skeleton2dAnimation, invalidateSkeleton2dModel } from './use-skeleton2d.tsx'
+import { autoRigModel } from './skeleton2d-autorig.ts'
+import { anchorFromPoint, containLayout } from './skeleton2d-editor-layout.ts'
+import { drawMeshOverlay, dragOffset, isZeroOffset, nearestVertex } from './skeleton2d-mesh.ts'
+import { boneUVFromPoint, drawBonesOverlay, nearestBone, nextBoneName } from './skeleton2d-bones.ts'
 import {
   drawTimeline,
   nearestKey,
@@ -43,10 +44,10 @@ import {
   trackRects,
   xToTime,
   yToValue,
-} from './live2d-timeline.ts'
+} from './skeleton2d-timeline.ts'
 
 /** 编辑器只需要的那两条缝：写回产物本体、再读一次（与 `ArtifactModalBridge` 相容）。 */
-export interface Live2dWriter {
+export interface Skeleton2dWriter {
   writeText(projectId: string, cardId: string, content: string): Promise<unknown>
   readArtifact(projectId: string, cardId: string): Promise<ArtifactView>
 }
@@ -54,7 +55,7 @@ export interface Live2dWriter {
 /** 停止拖动到落盘的间隔：比手快慢半拍，比扫盘快得多。 */
 const SAVE_DEBOUNCE_MS = 600
 
-/** 一组动作的取值范围（与 `core/live2d/model.ts` 的归一一致——面板只是同一副夹子的手柄）。 */
+/** 一组动作的取值范围（与 `core/skeleton2d/model.ts` 的归一一致——面板只是同一副夹子的手柄）。 */
 const CYCLES_MAX = 8
 const AMPLITUDE_MAX = 0.2
 const LOOP_MIN = 1
@@ -72,7 +73,7 @@ function quantize(value: number): number {
 type SaveStatus = 'idle' | 'saving' | 'saved'
 
 /** 编辑器的四种模式。 */
-export type Live2dEditorMode = 'params' | 'mesh' | 'bones' | 'timeline'
+export type Skeleton2dEditorMode = 'params' | 'mesh' | 'bones' | 'timeline'
 
 const MOTION_KEYS = ['breath', 'sway', 'tilt'] as const
 type MotionKey = (typeof MOTION_KEYS)[number]
@@ -83,34 +84,34 @@ type MotionKey = (typeof MOTION_KEYS)[number]
  */
 function MotionGroup(props: {
   label: string
-  motion: Live2dMotion
-  onChange: (next: Live2dMotion) => void
+  motion: Skeleton2dMotion
+  onChange: (next: Skeleton2dMotion) => void
   t: Translate
 }) {
   const { label, motion, onChange, t } = props
   const keyed = motion.keys !== undefined && motion.keys.length >= 2
   return (
-    <div className="dsh-canvas-live2d-group">
-      <div className="dsh-canvas-live2d-title">
+    <div className="dsh-canvas-skeleton2d-group">
+      <div className="dsh-canvas-skeleton2d-title">
         {label}
-        {keyed ? <span className="dsh-canvas-live2d-badge">{t('canvas.live2d.keyed')}</span> : null}
+        {keyed ? <span className="dsh-canvas-skeleton2d-badge">{t('canvas.skeleton2d.keyed')}</span> : null}
       </div>
-      <label className="dsh-canvas-live2d-row">
-        <span className="dsh-canvas-live2d-key">{t('canvas.live2d.amplitude')}</span>
+      <label className="dsh-canvas-skeleton2d-row">
+        <span className="dsh-canvas-skeleton2d-key">{t('canvas.skeleton2d.amplitude')}</span>
         <input
           type="range"
-          className="dsh-canvas-live2d-slider"
+          className="dsh-canvas-skeleton2d-slider"
           min={0}
           max={AMPLITUDE_MAX}
           step={0.001}
           value={motion.amplitude}
           onChange={(event) => onChange({ ...motion, amplitude: Number(event.target.value) })}
         />
-        <span className="dsh-canvas-live2d-value">{(motion.amplitude * 100).toFixed(1)}%</span>
+        <span className="dsh-canvas-skeleton2d-value">{(motion.amplitude * 100).toFixed(1)}%</span>
       </label>
-      <label className="dsh-canvas-live2d-row">
-        <span className="dsh-canvas-live2d-key">{t('canvas.live2d.cycles')}</span>
-        <span className="dsh-canvas-live2d-step">
+      <label className="dsh-canvas-skeleton2d-row">
+        <span className="dsh-canvas-skeleton2d-key">{t('canvas.skeleton2d.cycles')}</span>
+        <span className="dsh-canvas-skeleton2d-step">
           <button
             type="button"
             className="dsh-canvas-chipbtn"
@@ -120,7 +121,7 @@ function MotionGroup(props: {
           >
             −
           </button>
-          <span className="dsh-canvas-live2d-value">{motion.cycles}</span>
+          <span className="dsh-canvas-skeleton2d-value">{motion.cycles}</span>
           <button
             type="button"
             className="dsh-canvas-chipbtn"
@@ -132,11 +133,11 @@ function MotionGroup(props: {
           </button>
         </span>
       </label>
-      <label className="dsh-canvas-live2d-row">
-        <span className="dsh-canvas-live2d-key">{t('canvas.live2d.phase')}</span>
+      <label className="dsh-canvas-skeleton2d-row">
+        <span className="dsh-canvas-skeleton2d-key">{t('canvas.skeleton2d.phase')}</span>
         <input
           type="range"
-          className="dsh-canvas-live2d-slider"
+          className="dsh-canvas-skeleton2d-slider"
           min={0}
           max={0.999}
           step={0.01}
@@ -144,19 +145,19 @@ function MotionGroup(props: {
           value={motion.phase}
           onChange={(event) => onChange({ ...motion, phase: Number(event.target.value) })}
         />
-        <span className="dsh-canvas-live2d-value">{Math.round(motion.phase * 100)}%</span>
+        <span className="dsh-canvas-skeleton2d-value">{Math.round(motion.phase * 100)}%</span>
       </label>
     </div>
   )
 }
 
-/** live2d 编辑器：动画 + 三种模式的面板 + 防抖自动保存。 */
-export function Live2dEditor(props: {
+/** skeleton2d 编辑器：动画 + 三种模式的面板 + 防抖自动保存。 */
+export function Skeleton2dEditor(props: {
   projectId: string
   cardId: string
-  bridge: Live2dWriter
+  bridge: Skeleton2dWriter
   /** 盘上的模型（编辑器挂载时的起点；外部的改动会收进来，见下）。 */
-  disk: Live2dModel
+  disk: Skeleton2dModel
   textureUrl: string
   /** 一次写入落地了——交给外壳，画布据此重读（卡面的动画跟着换参数）。 */
   onSaved: () => void
@@ -167,23 +168,48 @@ export function Live2dEditor(props: {
   const { projectId, cardId, bridge, disk, textureUrl, onSaved, adopt, t } = props
 
   // 草稿即真源：面板改的是它，动画放的是它，落盘的也是它。
-  const [draft, setDraft] = useState<Live2dModel>(disk)
+  const [draft, setDraft] = useState<Skeleton2dModel>(disk)
   const draftRef = useRef(draft)
   draftRef.current = draft
   const [status, setStatus] = useState<SaveStatus>('idle')
   /** 我们认为盘上现在是什么（上次成功写出的序列化，或读到的起点）。 */
-  const savedRef = useRef(serializeLive2dModel(disk))
+  const savedRef = useRef(serializeSkeleton2dModel(disk))
 
   // 模式：参数是出厂档，网格与时间线各占一层交互。
-  const [mode, setMode] = useState<Live2dEditorMode>('params')
+  const [mode, setMode] = useState<Skeleton2dEditorMode>('params')
 
   // 贴图真实比例：锚点、网格、点击换算都靠它；没量到之前按 1:1。
   const [aspect, setAspect] = useState(1)
 
+  // 自动分层建骨：一次读像素的活儿，跑的时候把按钮按住（免得连点两次切两遍）。
+  const [rigBusy, setRigBusy] = useState(false)
+  const rigRun = useRef(false)
+  const runAutoRig = useCallback(() => {
+    if (rigRun.current) return
+    rigRun.current = true
+    setRigBusy(true)
+    void autoRigModel(draftRef.current, textureUrl)
+      .then((next) => {
+        if (next !== undefined) setDraft(next)
+      })
+      .finally(() => {
+        rigRun.current = false
+        setRigBusy(false)
+      })
+  }, [textureUrl])
+
+  // 生成时打了 `autoRig` 标记：打开编辑器就跑一次，跑完标记随草稿落盘消失——
+  // 一次性的迁移跟着「拿到像素的那一刻」发生，用户不必再点一下。
+  useEffect(() => {
+    if (disk.autoRig !== true) return
+    runAutoRig()
+    // 只认挂载时那一版：之后 disk 变了是别的改动，不该再触发一次自动分层。
+  }, [])
+
   // 盘上变了：自己写出去的回声（内容与 savedRef 一致）收下不动作；**别人的**改动
   // （会话里重新生成过、JSON 被直接编辑过）收进草稿——编辑器不说「我覆写你的」。
   useEffect(() => {
-    const payload = serializeLive2dModel(disk)
+    const payload = serializeSkeleton2dModel(disk)
     if (payload === savedRef.current) return
     savedRef.current = payload
     setDraft(disk)
@@ -202,7 +228,7 @@ export function Live2dEditor(props: {
         .then(() => {
           savedRef.current = snapshot
           setStatus('saved')
-          invalidateLive2dModel(projectId, cardId)
+          invalidateSkeleton2dModel(projectId, cardId)
           void bridge
             .readArtifact(projectId, cardId)
             .then((next) => adopt(next))
@@ -217,10 +243,10 @@ export function Live2dEditor(props: {
   // 防抖自动保存：草稿与「认为盘上的」不一致就排一次写，停手 600ms 落盘。网格拖拽与
   // 时间线拖键每一帧都在改草稿——防抖天然把连续拖动合并成「停手后一次写」。
   useEffect(() => {
-    const payload = serializeLive2dModel(draft)
+    const payload = serializeSkeleton2dModel(draft)
     if (payload === savedRef.current) return undefined
     const timer = window.setTimeout(() => {
-      save(serializeLive2dModel(draftRef.current))
+      save(serializeSkeleton2dModel(draftRef.current))
     }, SAVE_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
   }, [draft, save])
@@ -229,7 +255,7 @@ export function Live2dEditor(props: {
   // ——那一趟改动不能跟着丢。写「此刻的草稿」，不写排定时器时的那份。
   useEffect(
     () => () => {
-      const snapshot = serializeLive2dModel(draftRef.current)
+      const snapshot = serializeSkeleton2dModel(draftRef.current)
       if (snapshot !== savedRef.current) save(snapshot)
     },
     [save],
@@ -260,7 +286,7 @@ export function Live2dEditor(props: {
     return () => observer.disconnect()
   }, [mode])
 
-  const setMotion = useCallback((key: MotionKey, next: Live2dMotion) => {
+  const setMotion = useCallback((key: MotionKey, next: Skeleton2dMotion) => {
     setDraft((current) => ({ ...current, [key]: next }))
   }, [])
 
@@ -275,8 +301,8 @@ export function Live2dEditor(props: {
   /** 清一组动作的关键帧：回到正弦驱动（拍数 / 相位重新生效）。 */
   const clearKeys = useCallback((key: MotionKey) => {
     setDraft((current) => {
-      const motion = current[key] as Live2dMotion
-      const next: Live2dMotion = { cycles: motion.cycles, amplitude: motion.amplitude, phase: motion.phase }
+      const motion = current[key] as Skeleton2dMotion
+      const next: Skeleton2dMotion = { cycles: motion.cycles, amplitude: motion.amplitude, phase: motion.phase }
       return { ...current, [key]: next }
     })
   }, [])
@@ -284,7 +310,7 @@ export function Live2dEditor(props: {
   /** 清掉全部雕刻：网格回到方方正正。 */
   const resetDeform = useCallback(() => {
     setDraft((current) => {
-      const next: Live2dModel = { ...current }
+      const next: Skeleton2dModel = { ...current }
       delete next.deform
       return next
     })
@@ -364,7 +390,7 @@ export function Live2dEditor(props: {
         if (isZeroOffset(offset)) delete offsets[key]
         else offsets[key] = offset
         const deform = Object.keys(offsets).length === 0 ? undefined : { offsets }
-        const next: Live2dModel = { ...current }
+        const next: Skeleton2dModel = { ...current }
         if (deform === undefined) delete next.deform
         else next.deform = deform
         return next
@@ -394,7 +420,7 @@ export function Live2dEditor(props: {
   boneSelRef.current = boneSel
 
   /** 改一根骨骼（按序号）；坐标由调用方夹好。 */
-  const setBone = useCallback((index: number, next: Live2dBone) => {
+  const setBone = useCallback((index: number, next: Skeleton2dBone) => {
     setDraft((current) => {
       const list = [...(current.bones ?? [])]
       list[index] = next
@@ -407,7 +433,7 @@ export function Live2dEditor(props: {
     setDraft((current) => {
       const list = current.bones ?? []
       const parent = boneSelRef.current !== undefined ? list[boneSelRef.current]?.name : undefined
-      const bone: Live2dBone = {
+      const bone: Skeleton2dBone = {
         name: nextBoneName(list),
         x: u,
         y: v,
@@ -443,7 +469,7 @@ export function Live2dEditor(props: {
   /** 清掉全部骨骼与轨道。 */
   const clearBones = useCallback(() => {
     setDraft((current) => {
-      const next: Live2dModel = { ...current }
+      const next: Skeleton2dModel = { ...current }
       delete next.bones
       delete next.boneTracks
       return next
@@ -499,7 +525,7 @@ export function Live2dEditor(props: {
         return
       }
       const { x, y } = boneUVFromPoint(px, py, stageBox)
-      setBone(grabbed, { ...(bonesRef.current[grabbed] as Live2dBone), x, y })
+      setBone(grabbed, { ...(bonesRef.current[grabbed] as Skeleton2dBone), x, y })
     },
     [boneHover, setBone, stageBox],
   )
@@ -518,7 +544,7 @@ export function Live2dEditor(props: {
   const [boneGrabbedKey, setBoneGrabbedKey] = useState<number | undefined>(undefined)
 
   /** 改某根骨骼的旋转键表；凑不足两键就整体收回静止。 */
-  const setBoneKeys = useCallback((name: string, keys: Live2dKeyframe[] | undefined) => {
+  const setBoneKeys = useCallback((name: string, keys: Skeleton2dKeyframe[] | undefined) => {
     setDraft((current) => {
       const tracks = { ...(current.boneTracks ?? {}) }
       if (keys === undefined || keys.length < 2) delete tracks[name]
@@ -604,7 +630,7 @@ export function Live2dEditor(props: {
       const v = yToValue(py, rect1)
       const loop = draftRef.current.loop
       const half = (t + 0.5) % 1
-      const seeded: Live2dKeyframe[] = [
+      const seeded: Skeleton2dKeyframe[] = [
         { t: quantize(t), v: quantize(v) },
         { t: quantize(half), v: quantize(boneRotationAt(keys, half * loop, loop) / BONE_ROT_MAX) },
       ].sort((a, b) => a.t - b.t)
@@ -631,8 +657,8 @@ export function Live2dEditor(props: {
       const rect1 = boneRects[0]
       if (rect1 === undefined) return
       // 时刻夹在左右邻居之间（同动作轨道）：键不许穿过彼此。
-      const lower = holding === 0 ? 0 : (keys[holding - 1] as Live2dKeyframe).t + 0.001
-      const upper = holding === keys.length - 1 ? 0.999 : (keys[holding + 1] as Live2dKeyframe).t - 0.001
+      const lower = holding === 0 ? 0 : (keys[holding - 1] as Skeleton2dKeyframe).t + 0.001
+      const upper = holding === keys.length - 1 ? 0.999 : (keys[holding + 1] as Skeleton2dKeyframe).t - 0.001
       const t = Math.min(upper, Math.max(lower, xToTime(event.clientX - rect.left, strip.width)))
       keys[holding] = { t: quantize(t), v: quantize(yToValue(event.clientY - rect.top, rect1)) }
       setBoneKeys(bone.name, keys)
@@ -693,10 +719,10 @@ export function Live2dEditor(props: {
   const rects = useMemo(() => trackRects(MOTION_KEYS.length, strip.height), [strip.height])
 
   /** 改某条轨道的键表；凑不足两键就整体收回正弦。 */
-  const setKeys = useCallback((track: MotionKey, keys: Live2dKeyframe[] | undefined) => {
+  const setKeys = useCallback((track: MotionKey, keys: Skeleton2dKeyframe[] | undefined) => {
     setDraft((current) => {
-      const motion = current[track] as Live2dMotion
-      const nextMotion: Live2dMotion =
+      const motion = current[track] as Skeleton2dMotion
+      const nextMotion: Skeleton2dMotion =
         keys === undefined || keys.length < 2
           ? { cycles: motion.cycles, amplitude: motion.amplitude, phase: motion.phase }
           : { ...motion, keys: keys.map((k) => ({ t: k.t, v: k.v })) }
@@ -719,10 +745,10 @@ export function Live2dEditor(props: {
       const model = draftRef.current
       const loop = model.loop
       const playhead = (((clockRef.current % loop) + loop) % loop) / loop
-      const values = MOTION_KEYS.map((key) => motionValueAt(model[key] as Live2dMotion, clockRef.current, loop))
-      const keys = MOTION_KEYS.map((key) => (model[key] as Live2dMotion).keys)
+      const values = MOTION_KEYS.map((key) => motionValueAt(model[key] as Skeleton2dMotion, clockRef.current, loop))
+      const keys = MOTION_KEYS.map((key) => (model[key] as Skeleton2dMotion).keys)
       const sampled = MOTION_KEYS.map((key) => {
-        const motion = model[key] as Live2dMotion
+        const motion = model[key] as Skeleton2dMotion
         return (p: number): number => motionValueAt(motion, p * loop, loop)
       })
       drawTimeline(ctx, strip.width, strip.height, rects, values, keys, sampled, playhead, grabbed.current ?? grabbedKey)
@@ -749,7 +775,7 @@ export function Live2dEditor(props: {
       const track = trackAt(py, rects)
       if (track === undefined) return
       const motionKey = MOTION_KEYS[track] as MotionKey
-      const keys = (draftRef.current[motionKey] as Live2dMotion).keys
+      const keys = (draftRef.current[motionKey] as Skeleton2dMotion).keys
       if (keys !== undefined && keys.length >= 2) {
         const hit = nearestKey(px, py, keys, rects[track] as (typeof rects)[number], strip.width)
         if (hit !== undefined) {
@@ -764,10 +790,10 @@ export function Live2dEditor(props: {
       // 再存：`sampleKeys` 假定升序，乱序的键表会让曲线在缝合处打结。
       const t = Math.min(0.999, xToTime(px, strip.width))
       const v = yToValue(py, rects[track] as (typeof rects)[number])
-      const motion = draftRef.current[motionKey] as Live2dMotion
+      const motion = draftRef.current[motionKey] as Skeleton2dMotion
       const loop = draftRef.current.loop
       const half = (t + 0.5) % 1
-      const seeded: Live2dKeyframe[] = [
+      const seeded: Skeleton2dKeyframe[] = [
         { t: quantize(t), v: quantize(v) },
         { t: quantize(Math.min(0.999, half)), v: quantize(motionValueAt(motion, half * loop, loop)) },
       ].sort((a, b) => a.t - b.t)
@@ -788,12 +814,12 @@ export function Live2dEditor(props: {
       const px = event.clientX - rect.left
       const py = event.clientY - rect.top
       const motionKey = MOTION_KEYS[holding.track] as MotionKey
-      const keys = [...((draftRef.current[motionKey] as Live2dMotion).keys ?? [])]
+      const keys = [...((draftRef.current[motionKey] as Skeleton2dMotion).keys ?? [])]
       if (keys[holding.key] === undefined) return
       // 时刻夹在左右邻居之间（首尾各自贴边）：键不许穿过彼此——换序会让「按住的是
       // 哪一枚」失去意义，也省掉拖动中的重排序。
-      const lower = holding.key === 0 ? 0 : (keys[holding.key - 1] as Live2dKeyframe).t + 0.001
-      const upper = holding.key === keys.length - 1 ? 0.999 : (keys[holding.key + 1] as Live2dKeyframe).t - 0.001
+      const lower = holding.key === 0 ? 0 : (keys[holding.key - 1] as Skeleton2dKeyframe).t + 0.001
+      const upper = holding.key === keys.length - 1 ? 0.999 : (keys[holding.key + 1] as Skeleton2dKeyframe).t - 0.001
       const t = Math.min(upper, Math.max(lower, xToTime(px, strip.width)))
       keys[holding.key] = { t: quantize(t), v: quantize(yToValue(py, rects[holding.track] as (typeof rects)[number])) }
       setKeys(motionKey, keys)
@@ -818,7 +844,7 @@ export function Live2dEditor(props: {
       const track = trackAt(py, rects)
       if (track === undefined) return
       const motionKey = MOTION_KEYS[track] as MotionKey
-      const keys = (draftRef.current[motionKey] as Live2dMotion).keys
+      const keys = (draftRef.current[motionKey] as Skeleton2dMotion).keys
       if (keys === undefined || keys.length < 2) return
       const hit = nearestKey(px, py, keys, rects[track] as (typeof rects)[number], strip.width)
       if (hit === undefined) return
@@ -828,26 +854,26 @@ export function Live2dEditor(props: {
     [rects, setKeys, strip.width],
   )
 
-  const modeLabels: Record<Live2dEditorMode, string> = {
-    params: t('canvas.live2d.modeParams'),
-    mesh: t('canvas.live2d.modeMesh'),
-    bones: t('canvas.live2d.modeBones'),
-    timeline: t('canvas.live2d.modeTimeline'),
+  const modeLabels: Record<Skeleton2dEditorMode, string> = {
+    params: t('canvas.skeleton2d.modeParams'),
+    mesh: t('canvas.skeleton2d.modeMesh'),
+    bones: t('canvas.skeleton2d.modeBones'),
+    timeline: t('canvas.skeleton2d.modeTimeline'),
   }
   const motionLabels: Record<MotionKey, string> = {
-    breath: t('canvas.live2d.breath'),
-    sway: t('canvas.live2d.sway'),
-    tilt: t('canvas.live2d.tilt'),
+    breath: t('canvas.skeleton2d.breath'),
+    sway: t('canvas.skeleton2d.sway'),
+    tilt: t('canvas.skeleton2d.tilt'),
   }
 
   return (
-    <div className="dsh-canvas-live2d-editor">
-      <div className="dsh-canvas-live2d-main">
-        <div ref={stageRef} className="dsh-canvas-live2d-stagebox" onClick={onStageClick}>
-          <Live2dAnimation
+    <div className="dsh-canvas-skeleton2d-editor">
+      <div className="dsh-canvas-skeleton2d-main">
+        <div ref={stageRef} className="dsh-canvas-skeleton2d-stagebox" onClick={onStageClick}>
+          <Skeleton2dAnimation
             model={draft}
             textureUrl={textureUrl}
-            className="dsh-canvas-live2d-view"
+            className="dsh-canvas-skeleton2d-view"
             onAspect={setAspect}
             clockRef={clockRef}
             timeRef={timeHold}
@@ -855,14 +881,14 @@ export function Live2dEditor(props: {
           {/* 锚点标记：参数模式才可点可放；网格 / 时间线模式它只作参照。 */}
           {box.width > 0 ? (
             <span
-              className="dsh-canvas-live2d-anchor"
+              className="dsh-canvas-skeleton2d-anchor"
               style={{ left: stageBox.left + draft.anchor.x * stageBox.width, top: stageBox.top + draft.anchor.y * stageBox.height }}
             />
           ) : null}
           {mode === 'mesh' ? (
             <canvas
               ref={meshCanvasRef}
-              className="dsh-canvas-live2d-meshoverlay"
+              className="dsh-canvas-skeleton2d-meshoverlay"
               onPointerDown={onMeshPointerDown}
               onPointerMove={onMeshPointerMove}
               onPointerUp={onMeshPointerUp}
@@ -871,20 +897,20 @@ export function Live2dEditor(props: {
           {mode === 'bones' ? (
             <canvas
               ref={bonesCanvasRef}
-              className="dsh-canvas-live2d-meshoverlay"
+              className="dsh-canvas-skeleton2d-meshoverlay"
               onPointerDown={onBonesPointerDown}
               onPointerMove={onBonesPointerMove}
               onPointerUp={onBonesPointerUp}
             />
           ) : null}
         </div>
-        <div className="dsh-canvas-live2d-panel">
-          <div className="dsh-canvas-live2d-tabs">
+        <div className="dsh-canvas-skeleton2d-panel">
+          <div className="dsh-canvas-skeleton2d-tabs">
             {(['params', 'mesh', 'bones', 'timeline'] as const).map((next) => (
               <button
                 key={next}
                 type="button"
-                className="dsh-canvas-live2d-tab"
+                className="dsh-canvas-skeleton2d-tab"
                 data-current={mode === next}
                 onClick={() => setMode(next)}
               >
@@ -894,106 +920,118 @@ export function Live2dEditor(props: {
           </div>
           {mode === 'params' ? (
             <>
-              <div className="dsh-canvas-live2d-group">
-                <div className="dsh-canvas-live2d-title">{t('canvas.live2d.loop')}</div>
-                <label className="dsh-canvas-live2d-row">
+              <div className="dsh-canvas-skeleton2d-group">
+                <div className="dsh-canvas-skeleton2d-title">
+                  {t('canvas.skeleton2d.rigTitle')}
+                  <button type="button" className="dsh-canvas-chipbtn" onClick={runAutoRig} disabled={rigBusy}>
+                    {rigBusy ? t('canvas.skeleton2d.rigBusy') : t('canvas.skeleton2d.rigRun')}
+                  </button>
+                </div>
+                <div className="dsh-canvas-skeleton2d-hint">{t('canvas.skeleton2d.rigHint')}</div>
+                <div className="dsh-canvas-skeleton2d-coords">
+                  {t('canvas.skeleton2d.rigLayers', { count: String(draft.layers?.length ?? 0), bones: String(draft.bones?.length ?? 0) })}
+                </div>
+              </div>
+              <div className="dsh-canvas-skeleton2d-group">
+                <div className="dsh-canvas-skeleton2d-title">{t('canvas.skeleton2d.loop')}</div>
+                <label className="dsh-canvas-skeleton2d-row">
                   <input
                     type="range"
-                    className="dsh-canvas-live2d-slider"
+                    className="dsh-canvas-skeleton2d-slider"
                     min={LOOP_MIN}
                     max={LOOP_MAX}
                     step={0.1}
                     value={draft.loop}
                     onChange={(event) => setLoop(Number(event.target.value))}
                   />
-                  <span className="dsh-canvas-live2d-value">{draft.loop.toFixed(1)}s</span>
+                  <span className="dsh-canvas-skeleton2d-value">{draft.loop.toFixed(1)}s</span>
                 </label>
               </div>
-              <MotionGroup label={t('canvas.live2d.breath')} motion={draft.breath} onChange={(next) => setMotion('breath', next)} t={t} />
-              <MotionGroup label={t('canvas.live2d.sway')} motion={draft.sway} onChange={(next) => setMotion('sway', next)} t={t} />
-              <MotionGroup label={t('canvas.live2d.tilt')} motion={draft.tilt} onChange={(next) => setMotion('tilt', next)} t={t} />
-              <div className="dsh-canvas-live2d-group">
-                <div className="dsh-canvas-live2d-title">
-                  {t('canvas.live2d.anchor')}
+              <MotionGroup label={t('canvas.skeleton2d.breath')} motion={draft.breath} onChange={(next) => setMotion('breath', next)} t={t} />
+              <MotionGroup label={t('canvas.skeleton2d.sway')} motion={draft.sway} onChange={(next) => setMotion('sway', next)} t={t} />
+              <MotionGroup label={t('canvas.skeleton2d.tilt')} motion={draft.tilt} onChange={(next) => setMotion('tilt', next)} t={t} />
+              <div className="dsh-canvas-skeleton2d-group">
+                <div className="dsh-canvas-skeleton2d-title">
+                  {t('canvas.skeleton2d.anchor')}
                   <button type="button" className="dsh-canvas-chipbtn" onClick={resetAnchor}>
-                    {t('canvas.live2d.resetAnchor')}
+                    {t('canvas.skeleton2d.resetAnchor')}
                   </button>
                 </div>
-                <div className="dsh-canvas-live2d-hint">{t('canvas.live2d.anchorHint')}</div>
-                <div className="dsh-canvas-live2d-coords">
+                <div className="dsh-canvas-skeleton2d-hint">{t('canvas.skeleton2d.anchorHint')}</div>
+                <div className="dsh-canvas-skeleton2d-coords">
                   ({draft.anchor.x.toFixed(2)}, {draft.anchor.y.toFixed(2)})
                 </div>
               </div>
             </>
           ) : null}
           {mode === 'mesh' ? (
-            <div className="dsh-canvas-live2d-group">
-              <div className="dsh-canvas-live2d-title">
-                {t('canvas.live2d.meshTitle')}
+            <div className="dsh-canvas-skeleton2d-group">
+              <div className="dsh-canvas-skeleton2d-title">
+                {t('canvas.skeleton2d.meshTitle')}
                 <button type="button" className="dsh-canvas-chipbtn" onClick={resetDeform} disabled={draft.deform === undefined}>
-                  {t('canvas.live2d.meshReset')}
+                  {t('canvas.skeleton2d.meshReset')}
                 </button>
               </div>
-              <div className="dsh-canvas-live2d-hint">{t('canvas.live2d.meshHint')}</div>
-              <div className="dsh-canvas-live2d-coords">
-                {t('canvas.live2d.meshCount', { count: String(Object.keys(draft.deform?.offsets ?? {}).length) })}
+              <div className="dsh-canvas-skeleton2d-hint">{t('canvas.skeleton2d.meshHint')}</div>
+              <div className="dsh-canvas-skeleton2d-coords">
+                {t('canvas.skeleton2d.meshCount', { count: String(Object.keys(draft.deform?.offsets ?? {}).length) })}
               </div>
             </div>
           ) : null}
           {mode === 'bones' ? (
             <>
-              <div className="dsh-canvas-live2d-group">
-                <div className="dsh-canvas-live2d-title">
-                  {t('canvas.live2d.bonesTitle')}
+              <div className="dsh-canvas-skeleton2d-group">
+                <div className="dsh-canvas-skeleton2d-title">
+                  {t('canvas.skeleton2d.bonesTitle')}
                   <button
                     type="button"
                     className="dsh-canvas-chipbtn"
                     onClick={clearBones}
                     disabled={bones.length === 0}
                   >
-                    {t('canvas.live2d.bonesClear')}
+                    {t('canvas.skeleton2d.bonesClear')}
                   </button>
                 </div>
-                <div className="dsh-canvas-live2d-hint">{t('canvas.live2d.bonesHint')}</div>
-                <div className="dsh-canvas-live2d-coords">
-                  {t('canvas.live2d.bonesCount', { count: String(bones.length) })}
+                <div className="dsh-canvas-skeleton2d-hint">{t('canvas.skeleton2d.bonesHint')}</div>
+                <div className="dsh-canvas-skeleton2d-coords">
+                  {t('canvas.skeleton2d.bonesCount', { count: String(bones.length) })}
                 </div>
               </div>
               {boneSel !== undefined ? (
-                <div className="dsh-canvas-live2d-group">
-                  <div className="dsh-canvas-live2d-title">
-                    {t('canvas.live2d.playhead')}
+                <div className="dsh-canvas-skeleton2d-group">
+                  <div className="dsh-canvas-skeleton2d-title">
+                    {t('canvas.skeleton2d.playhead')}
                     <button type="button" className="dsh-canvas-chipbtn" onClick={() => setPlaying((current) => !current)}>
-                      {playing ? t('canvas.live2d.pause') : t('canvas.live2d.play')}
+                      {playing ? t('canvas.skeleton2d.pause') : t('canvas.skeleton2d.play')}
                     </button>
                   </div>
-                  <div className="dsh-canvas-live2d-hint">{t('canvas.live2d.boneTrackHint')}</div>
+                  <div className="dsh-canvas-skeleton2d-hint">{t('canvas.skeleton2d.boneTrackHint')}</div>
                 </div>
               ) : null}
-              {boneSel !== undefined && (bones[boneSel] as Live2dBone | undefined) !== undefined ? (
-                <div className="dsh-canvas-live2d-group">
-                  <div className="dsh-canvas-live2d-title">
-                    {(bones[boneSel] as Live2dBone).name}
+              {boneSel !== undefined && (bones[boneSel] as Skeleton2dBone | undefined) !== undefined ? (
+                <div className="dsh-canvas-skeleton2d-group">
+                  <div className="dsh-canvas-skeleton2d-title">
+                    {(bones[boneSel] as Skeleton2dBone).name}
                     <button
                       type="button"
                       className="dsh-canvas-chipbtn"
                       onClick={() => removeBone(boneSel)}
                     >
-                      {t('canvas.live2d.boneDelete')}
+                      {t('canvas.skeleton2d.boneDelete')}
                     </button>
                   </div>
-                  <label className="dsh-canvas-live2d-row">
-                    <span className="dsh-canvas-live2d-key">{t('canvas.live2d.boneParent')}</span>
+                  <label className="dsh-canvas-skeleton2d-row">
+                    <span className="dsh-canvas-skeleton2d-key">{t('canvas.skeleton2d.boneParent')}</span>
                     <select
-                      className="dsh-canvas-live2d-parent"
-                      value={(bones[boneSel] as Live2dBone).parent ?? ''}
+                      className="dsh-canvas-skeleton2d-parent"
+                      value={(bones[boneSel] as Skeleton2dBone).parent ?? ''}
                       onChange={(event) => {
                         const parent = event.target.value
-                        const bone = bones[boneSel] as Live2dBone
+                        const bone = bones[boneSel] as Skeleton2dBone
                         setBone(boneSel, { ...bone, ...(parent === '' ? {} : { parent }) })
                       }}
                     >
-                      <option value="">{t('canvas.live2d.boneNoParent')}</option>
+                      <option value="">{t('canvas.skeleton2d.boneNoParent')}</option>
                       {/* 父级只能选数组里更早的骨骼：先父后子的次序是层级合成的地基。 */}
                       {bones.slice(0, boneSel).map((bone) => (
                         <option key={bone.name} value={bone.name}>
@@ -1003,7 +1041,7 @@ export function Live2dEditor(props: {
                     </select>
                   </label>
                   {boneSel + 1 < bones.length ? (
-                    <div className="dsh-canvas-live2d-hint">{t('canvas.live2d.boneChildHint')}</div>
+                    <div className="dsh-canvas-skeleton2d-hint">{t('canvas.skeleton2d.boneChildHint')}</div>
                   ) : null}
                 </div>
               ) : null}
@@ -1011,47 +1049,47 @@ export function Live2dEditor(props: {
           ) : null}
           {mode === 'timeline' ? (
             <>
-              <div className="dsh-canvas-live2d-group">
-                <div className="dsh-canvas-live2d-title">
-                  {t('canvas.live2d.playhead')}
+              <div className="dsh-canvas-skeleton2d-group">
+                <div className="dsh-canvas-skeleton2d-title">
+                  {t('canvas.skeleton2d.playhead')}
                   <button type="button" className="dsh-canvas-chipbtn" onClick={() => setPlaying((current) => !current)}>
-                    {playing ? t('canvas.live2d.pause') : t('canvas.live2d.play')}
+                    {playing ? t('canvas.skeleton2d.pause') : t('canvas.skeleton2d.play')}
                   </button>
                 </div>
-                <div className="dsh-canvas-live2d-hint">{t('canvas.live2d.scrubHint')}</div>
+                <div className="dsh-canvas-skeleton2d-hint">{t('canvas.skeleton2d.scrubHint')}</div>
               </div>
               {MOTION_KEYS.map((key) => {
-                const motion = draft[key] as Live2dMotion
+                const motion = draft[key] as Skeleton2dMotion
                 const keyed = motion.keys !== undefined && motion.keys.length >= 2
                 return (
-                  <div key={key} className="dsh-canvas-live2d-group">
-                    <div className="dsh-canvas-live2d-title">
+                  <div key={key} className="dsh-canvas-skeleton2d-group">
+                    <div className="dsh-canvas-skeleton2d-title">
                       {motionLabels[key]}
                       <button type="button" className="dsh-canvas-chipbtn" onClick={() => clearKeys(key)} disabled={!keyed}>
-                        {t('canvas.live2d.keysClear')}
+                        {t('canvas.skeleton2d.keysClear')}
                       </button>
                     </div>
-                    <div className="dsh-canvas-live2d-coords">
+                    <div className="dsh-canvas-skeleton2d-coords">
                       {keyed
-                        ? t('canvas.live2d.keysCount', { count: String(motion.keys?.length ?? 0) })
-                        : t('canvas.live2d.keysSine')}
+                        ? t('canvas.skeleton2d.keysCount', { count: String(motion.keys?.length ?? 0) })
+                        : t('canvas.skeleton2d.keysSine')}
                     </div>
                   </div>
                 )
               })}
-              <div className="dsh-canvas-live2d-hint">{t('canvas.live2d.timelineHint')}</div>
+              <div className="dsh-canvas-skeleton2d-hint">{t('canvas.skeleton2d.timelineHint')}</div>
             </>
           ) : null}
-          <div className="dsh-canvas-live2d-status">
+          <div className="dsh-canvas-skeleton2d-status">
             {status === 'saving' ? t('canvas.viewer.save') : status === 'saved' ? t('canvas.viewer.saved') : ''}
           </div>
         </div>
       </div>
       {mode === 'timeline' ? (
-        <div ref={timelineStripRef} className="dsh-canvas-live2d-strip">
+        <div ref={timelineStripRef} className="dsh-canvas-skeleton2d-strip">
           <canvas
             ref={timelineCanvasRef}
-            className="dsh-canvas-live2d-timeline"
+            className="dsh-canvas-skeleton2d-timeline"
             style={{ height: TIMELINE_HEIGHT }}
             onPointerDown={onTimelinePointerDown}
             onPointerMove={onTimelinePointerMove}
@@ -1061,10 +1099,10 @@ export function Live2dEditor(props: {
         </div>
       ) : null}
       {mode === 'bones' && boneSel !== undefined ? (
-        <div ref={timelineStripRef} className="dsh-canvas-live2d-strip">
+        <div ref={timelineStripRef} className="dsh-canvas-skeleton2d-strip">
           <canvas
             ref={bonesStripCanvasRef}
-            className="dsh-canvas-live2d-timeline"
+            className="dsh-canvas-skeleton2d-timeline"
             style={{ height: TIMELINE_HEIGHT }}
             onPointerDown={onBoneTrackPointerDown}
             onPointerMove={onBoneTrackPointerMove}

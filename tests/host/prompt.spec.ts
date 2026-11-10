@@ -171,20 +171,20 @@ describe('媒体卡的预设（F2.7）', () => {
   })
 })
 
-describe('Live2D 卡的预设（F2.7 第四种产物）', () => {
+describe('Skeleton2D 卡的预设（F2.7 第四种产物）', () => {
   it('指向自己的生成工具，并交代「微调动作 = 编辑 JSON」这一条与媒体相反的路', () => {
-    const text = sectionTextOf('live2d')
-    expect(text).toContain(`\`${TOOL_NAMES.generateLive2d}\``)
+    const text = sectionTextOf('skeleton2d')
+    expect(text).toContain(`\`${TOOL_NAMES.generateSkeleton2d}\``)
     expect(text).toContain('canvas_card_id')
     // 产物是 JSON 文本：文件工具在这里**是**正道，与媒体三态那句「not text」相反。
-    expect(text).toContain('live2d-lite model')
+    expect(text).toContain('skeleton2d-lite model')
     expect(text).toContain('edit the JSON')
     // 拍数保持整数——无缝循环的性质靠它，模型写歪导出就有跳变。
     expect(text).toContain('integer')
   })
 
   it('不带媒体三态的生成工具名', () => {
-    const text = sectionTextOf('live2d')
+    const text = sectionTextOf('skeleton2d')
     expect(text).not.toContain(TOOL_NAMES.generateImage)
     expect(text).not.toContain(TOOL_NAMES.generateVideo)
     expect(text).not.toContain(TOOL_NAMES.generateAudio)

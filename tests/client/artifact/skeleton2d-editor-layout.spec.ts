@@ -1,13 +1,13 @@
 /**
- * live2d 编辑器的纯算术（`live2d-editor-layout.ts`）——contain 贴合与锚点换算。
+ * skeleton2d 编辑器的纯算术（`skeleton2d-editor-layout.ts`）——contain 贴合与锚点换算。
  *
- * 这两段算术有两个使用者：编辑器的锚点标记 / 点击换算，与舞台（`live2d-stage.ts`）
+ * 这两段算术有两个使用者：编辑器的锚点标记 / 点击换算，与舞台（`skeleton2d-stage.ts`）
  * 的 GL 贴合——后者判据不在（WebGL 不进单测），所以「两边是同一个公式」这条性质
  * 只能钉在纯的那份上：这里的期望值就是手算的 contain 结果，舞台若改了贴合规则而
  * 这里没跟上，编辑器的标记就会从画面上漂走。
  */
 import { describe, expect, it } from 'vitest'
-import { anchorFromPoint, containLayout } from '../../../src/client/artifact/viewers/live2d/live2d-editor-layout.ts'
+import { anchorFromPoint, containLayout } from '../../../src/client/artifact/viewers/skeleton2d/skeleton2d-editor-layout.ts'
 
 describe('contain 贴合', () => {
   it('画布比贴图宽：画面按高铺满、左右留边', () => {

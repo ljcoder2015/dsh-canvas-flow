@@ -1,5 +1,5 @@
 /**
- * dsh-canvas — Live2D 卡的两条导出（F10.1）。
+ * dsh-canvas — Skeleton2D 卡的两条导出（F10.1）。
  *
  * 1. **帧序列雪碧图**：把动画**烘成图**（`sheet.png` + `sheet.json` + `README.txt`）。
  *    「导出给微信小游戏、Unity、Godot 当素材」这句话最稳的落法：帧序列是所有 2D 引擎
@@ -8,39 +8,39 @@
  * 2. **DragonBones 骨架**：把**骨骼那一层**交出去（`_ske.json` + `_tex.json` + 贴图）。
  *    网格、蒙皮权重、绑定姿态与骨骼动画都带着，进 DragonBones Pro 能继续摆姿势、进引擎
  *    能接物理与换装——换来的是「可编辑」，代价是非骨骼的形变层不在里面（见
- *    `core/live2d/dragonbones.ts` 开头那段：那几种形变按顶点连续衰减，骨骼表达不了）。
+ *    `core/skeleton2d/dragonbones.ts` 开头那段：那几种形变按顶点连续衰减，骨骼表达不了）。
  *
  * 与打包（`bundle-export.ts`）同一条分工：**能读的那一侧读，能下载的那一侧打包**——
- * 帧是浏览器里渲染出来的（WebGL 舞台 + `core/live2d/rig.ts` 的同一份算术），zip 也
+ * 帧是浏览器里渲染出来的（WebGL 舞台 + `core/skeleton2d/rig.ts` 的同一份算术），zip 也
  * 在浏览器里压（`CompressionStream`），整条路不依赖部署的导出能力。
  *
- * 纯与不纯的分界是刻意的：{@link spritesheetPlanOf} 与 `core/live2d/dragonbones.ts`
+ * 纯与不纯的分界是刻意的：{@link spritesheetPlanOf} 与 `core/skeleton2d/dragonbones.ts`
  * 只算数（node 判据跑它们），后面几个函数碰 `document` / `canvas.toBlob`——平台，不是逻辑。
  */
 
 import { zipDeflated, type ZipEntry } from '../../../core/artifact/io/zip.ts'
 import { fileStemOf } from '../../../core/canvas/card/card-name.ts'
-import { dragonBonesPackOf } from '../../../core/live2d/dragonbones.ts'
-import type { Live2dModel } from '../../../core/live2d/model.ts'
-import { createLive2dStage } from '../../artifact/viewers/live2d/live2d-stage.ts'
+import { dragonBonesPackOf } from '../../../core/skeleton2d/dragonbones.ts'
+import type { Skeleton2dModel } from '../../../core/skeleton2d/model.ts'
+import { createSkeleton2dStage } from '../../artifact/viewers/skeleton2d/skeleton2d-stage.ts'
 import type { CanvasKey } from '../../ui/locales.ts'
 import { platformDeflate } from './bundle-export.ts'
 
 /** 导出 MIME：一个 zip 就是 `application/zip`。 */
 export const SPRITESHEET_ZIP_MIME = 'application/zip'
 
-/** live2d 卡的两条出路。 */
-export type Live2dExportFormat = 'sheet' | 'bones'
+/** skeleton2d 卡的两条出路。 */
+export type Skeleton2dExportFormat = 'sheet' | 'bones'
 
 /** 「导出」菜单里提供的格式，按展示顺序排：先最稳的那条，再给带骨架的那条。 */
-export const LIVE2D_EXPORT_FORMATS: readonly Live2dExportFormat[] = ['sheet', 'bones']
+export const SKELETON2D_EXPORT_FORMATS: readonly Skeleton2dExportFormat[] = ['sheet', 'bones']
 
 /**
  * 每种格式在菜单里那行文案的字典键（与 `text-export.ts` 同一个道理：格式与文案一起改）。
  */
-export const LIVE2D_EXPORT_LABEL: Record<Live2dExportFormat, CanvasKey> = {
-  sheet: 'canvas.export.live2dSheet',
-  bones: 'canvas.export.live2dBones',
+export const SKELETON2D_EXPORT_LABEL: Record<Skeleton2dExportFormat, CanvasKey> = {
+  sheet: 'canvas.export.skeleton2dSheet',
+  bones: 'canvas.export.skeleton2dBones',
 }
 
 /** 一张雪碧图的布局与节律——全部由此函数定，其余地方只读它的产出。 */
@@ -79,7 +79,7 @@ const MAX_SHEET_SIDE = 8192
  * 单帧按贴图比例从目标宽反推；贴图比例极端（长条横幅）时单帧等比缩小，保证整张图
  * 不超过 {@link MAX_SHEET_SIDE}——宁可单帧糊一点，不要一张导不出来的图。
  */
-export function spritesheetPlanOf(model: Live2dModel, imageWidth: number, imageHeight: number): SpritesheetPlan {
+export function spritesheetPlanOf(model: Skeleton2dModel, imageWidth: number, imageHeight: number): SpritesheetPlan {
   const aspect = imageWidth > 0 && imageHeight > 0 ? imageWidth / imageHeight : 16 / 9
   const fps = DEFAULT_FPS
   const frameCount = Math.max(2, Math.min(MAX_FRAMES, Math.round(fps * model.loop)))
@@ -110,7 +110,7 @@ export function spritesheetPlanOf(model: Live2dModel, imageWidth: number, imageH
 export interface SpritesheetMeta {
   meta: {
     app: 'dsh-canvas'
-    format: 'dsh-live2d-lite/spritesheet@1'
+    format: 'dsh-skeleton2d/spritesheet@1'
     image: 'sheet.png'
     size: { w: number; h: number }
     frame: { w: number; h: number }
@@ -136,7 +136,7 @@ export function spritesheetMetaOf(plan: SpritesheetPlan): SpritesheetMeta {
   return {
     meta: {
       app: 'dsh-canvas',
-      format: 'dsh-live2d-lite/spritesheet@1',
+      format: 'dsh-skeleton2d/spritesheet@1',
       image: 'sheet.png',
       size: { w: plan.sheetWidth, h: plan.sheetHeight },
       frame: { w: plan.frameWidth, h: plan.frameHeight },
@@ -152,9 +152,9 @@ export function spritesheetMetaOf(plan: SpritesheetPlan): SpritesheetMeta {
 /** 三个引擎各一段能照抄的用法。写在这里而不是调用方：它是产物的一部分，跟着 zip 走。 */
 function readmeText(): string {
   return [
-    'dsh-canvas live2d-lite 帧序列雪碧图',
+    'dsh-canvas skeleton2d-lite 帧序列雪碧图',
     '',
-    '这个包把一段 live2d-lite 动画烘成了无缝循环的帧序列：',
+    '这个包把一段 skeleton2d-lite 动画烘成了无缝循环的帧序列：',
     '- sheet.png —— 所有帧横向排布的雪碧图（每帧大小一致，见 sheet.json）',
     '- sheet.json —— 布局与节律（fps / 帧数 / 每帧位置）',
     '',
@@ -179,7 +179,7 @@ function readmeText(): string {
 }
 
 /** 把贴图 URL 读成一张加载完的图；失败回 `null`（调用方按「贴图不在」说话）。 */
-export function loadLive2dTexture(url: string): Promise<HTMLImageElement | null> {
+export function loadSkeleton2dTexture(url: string): Promise<HTMLImageElement | null> {
   return new Promise((resolve) => {
     const image = new Image()
     image.onload = () => resolve(image.naturalWidth > 0 ? image : null)
@@ -196,8 +196,8 @@ export function loadLive2dTexture(url: string): Promise<HTMLImageElement | null>
  *
  * @returns 交出去的包名与内容清单；失败（GL 不可用、编码失败）抛给调用方说。
  */
-export async function exportLive2dSpritesheet(
-  model: Live2dModel,
+export async function exportSkeleton2dSpritesheet(
+  model: Skeleton2dModel,
   image: HTMLImageElement,
   cardName: string,
   save: (name: string, bytes: Uint8Array, mime: string) => void,
@@ -209,7 +209,7 @@ export async function exportLive2dSpritesheet(
   // 画布收帧。`preserveDrawingBuffer` 必须开——不保留的话 drawImage 读到的可能是
   // 已经被下一帧清掉的缓冲。
   const frameCanvas = document.createElement('canvas')
-  const stage = createLive2dStage(frameCanvas, { preserveDrawingBuffer: true })
+  const stage = createSkeleton2dStage(frameCanvas, { preserveDrawingBuffer: true })
   if (stage === undefined) throw new Error('浏览器当前不可用 WebGL，帧序列烘不出来；换一个支持硬件加速的环境再试')
   stage.resize(plan.frameWidth, plan.frameHeight)
 
@@ -241,7 +241,7 @@ export async function exportLive2dSpritesheet(
     { name: 'README.txt', data: new TextEncoder().encode(readmeText()) },
   ]
   const bytes = await zipDeflated(entries, platformDeflate())
-  const stem = fileStemOf(cardName.trim()) || fileStemOf('live2d')
+  const stem = fileStemOf(cardName.trim()) || fileStemOf('skeleton2d')
   const name = `${stem}-spritesheet.zip`
   save(name, bytes, SPRITESHEET_ZIP_MIME)
   return { name, frames: plan.frameCount }
@@ -250,7 +250,7 @@ export async function exportLive2dSpritesheet(
 /** 骨架包里的 README：写清三份文件各是什么、以及**它不含哪一层**。 */
 function dragonBonesReadme(stem: string): string {
   return [
-    'dsh-canvas live2d-lite 骨架包（DragonBones 5.5）',
+    'dsh-canvas skeleton2d-lite 骨架包（DragonBones 5.5）',
     '',
     `${stem}_ske.json —— 骨架、蒙皮网格（含顶点权重）与 idle 动画`,
     `${stem}_tex.json —— 图集（一张全幅子图，名为 body）`,
@@ -306,13 +306,13 @@ export interface DragonBonesOutcome {
  * 没有骨骼的模型直接抛：这份文件的意义全在骨架，导出来会是一张静态图。调用方应当先
  * 看 `model.bones`，把话说到「先去骨骼模式加关节」上，而不是把异常抛给用户。
  */
-export async function exportLive2dDragonBones(
-  model: Live2dModel,
+export async function exportSkeleton2dDragonBones(
+  model: Skeleton2dModel,
   image: HTMLImageElement,
   cardName: string,
   save: (name: string, bytes: Uint8Array, mime: string) => void,
 ): Promise<DragonBonesOutcome> {
-  const stem = fileStemOf(cardName.trim()) || fileStemOf('live2d')
+  const stem = fileStemOf(cardName.trim()) || fileStemOf('skeleton2d')
   const pack = dragonBonesPackOf(model, { width: image.naturalWidth, height: image.naturalHeight }, stem)
   if (pack === undefined) throw new Error('这份模型还没有骨骼，先到骨骼模式加几根关节再导出')
   const encoder = new TextEncoder()

@@ -576,8 +576,11 @@ function DesignDock({
   type RectFace = keyof typeof rectFaces
   const [lastShape, setLastShape] = useState<RectFace>('rectangle')
   const [lastFrame, setLastFrame] = useState<'frame' | 'section'>('frame')
-  if (tool in rectFaces) setLastShape(tool as RectFace)
-  if (tool === 'frame' || tool === 'section') setLastFrame(tool)
+  // 值变过才写：render 期间 setState 必须**带相等守卫**（React 官方规矩）——无条件写的话
+  // 每一轮渲染都派发一次更新，React 19 会直接「Too many re-renders」把整棵树卸下来
+  // （实测：握着形状笔点开下拉 → 整页白屏；React 18 的等值 bail-out 兜得住，19 兜不住）。
+  if (tool in rectFaces && tool !== lastShape) setLastShape(tool as RectFace)
+  if ((tool === 'frame' || tool === 'section') && tool !== lastFrame) setLastFrame(tool)
   const rectTool: RectFace = tool in rectFaces ? (tool as RectFace) : lastShape
   const frameTool: 'frame' | 'section' = tool === 'section' ? 'section' : tool === 'frame' ? 'frame' : lastFrame
 
@@ -836,9 +839,6 @@ function DesignDock({
     </div>
   )
 }
-
-// 临时复现导出（排查下拉空白），结案后删除。
-export { DesignDock }
 
 export function DesignViewer({ view }: ViewerProps) {
   const chrome = useChrome()

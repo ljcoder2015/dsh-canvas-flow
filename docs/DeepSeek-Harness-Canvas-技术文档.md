@@ -640,17 +640,42 @@ doubao-audio:
 
 **八处变异逐条验红**：删掉「撞自己算替换」⇒ 2 红；上限写成 `>=` ⇒ 边界红；`folder` 不跟随卡片目录 ⇒ 2 红；字节之后又走一次 `io.write` ⇒ 2 红；删 `delete next.aspect` ⇒ 1 红；去掉 `canImport` ⇒ 1 红；不清 `value` + 手写 `accept` ⇒ 2 红；被拒也 `setStamp` ⇒ 1 红。
 
-### live2d：产物是一份模型，生成只是写一份 JSON（F2.8，v2.05）
+### skeleton2d：按 Godot 的 Skeleton2D 建模——一具骨架 + 若干层网格（v2.08）
 
-动画卡（`live2d`）与媒体三兄弟**形状像、通道全不一样**，所以它从第一天就不在 `MEDIA_KINDS` 里：
+改名的同时把模型换成了 Godot `Skeleton2D` 的形态：**一具骨架**（`Bone2D` 那样的父子关节，
+rest 位置 + 旋转轨道）＋ **若干绑定到它上面的层**（`Polygon2D` 挂 skeleton 那种）。层是
+`layers[]` 里的一项：整幅贴图上的一个矩形、一份游程掩码、自己的网格密度、可选的骨骼
+子集与层内雕刻。没有 `layers` 的模型照旧按「整幅一张 24×24 网格」渲染，两种形态共用
+一份变形算术（`core/skeleton2d/rig.ts` 的 `composePoint` 是唯一把「蒙皮 → 三组动作 →
+雕刻」写全的地方）。
 
-- **产物是文本**：`.live2d.json` 描述「贴图是谁、循环多长、几组动作、网格怎么雕、骨骼怎么转」，读写走 `readArtifact` / `writeText` 那条文本路。媒体那三条路对它一条都不成立——按扩展名取 MIME（`MEDIA_MIME`）没有它的条目、原样下载等于交出去一串引擎读不懂的模型、16MB 导入上限也管不着它。所以判据只有一根指针：`LIVE2D_KINDS` / `isLive2dKind`（`kind-registry.ts`），导出、席位、生成提示词三处都读它，不手写 `'live2d'`。
-- **双扩展名要在 `data` 前面判**：`detectKind` 里 `basename.endsWith('.live2d.json')` 那一行必须排在「`json` → data」之前。两条地址模式（`**/*.live2d.json` 与 `**/*.json`）同时命中，谁先注册谁认领；而错的那一种**不报错**，只是预览里躺着一串 JSON。
-- **工具数 18 → 19**：`canvas_generate_live2d` 与媒体三个生成工具同一条纪律——名字从 `TOOL_NAMES` 取，工具注册 / 提示词段落 / 清单申报三处同源（`tests/contract.spec.ts` 与 `tools.spec.ts` 钉这一条）。
-- **模型只有一份归一入口**（`core/live2d/model.ts` 的 `normalizeLive2dModel`）：键按 `t` 升序、重位键收敛、`MAX_KEYS = 64`、雕刻偏移夹在 `DEFORM_MAX = 0.15`、骨骼 `parent` 只许指向数组里**更早**的那一根（先父后子，一遍线性扫就够，也天然无环）、骨骼轨道按**已收下的骨骼清单**筛、雕刻表按键名排序。
-- **序列化必须稳定**（`serializeLive2dModel`）：同一份模型两次写出来逐字节相同。这不是洁癖——「内容没变就不写」「按字节判缓存」这两条都建在它上面，而它们一旦松动，症状是「保存了但没生效」那种最难查的一类。
-- **贴图是相对引用**：模型文件在 `live2d/名字.live2d.json`，`texture` 默认写裸文件名（同目录的 `名字.png`——模型与图一起搬目录不断链）；引用进来的上游图仍在 `images/` 时写项目根相对的 `/images/…`。`texturePathOf` 解相对路径、`textureReferenceOf` 反向拼（层数用尽就退回根相对）。
-- **生成侧引导**（`host/prompt.ts` 的 `artifactGuidance('live2d')`）：产物不是文本文章、别拿文件工具去写；贴图从**引用进来的那张图**来，写相对路径；动作先用正弦节律（`cycles` / `amplitude` / `phase`），要非周期的手感再用关键帧。
+三个不好猜的约定：
+
+- **掩码存游程不存层图**（`"12,340,5,88"`，从透明开始按行扫）：产物仍旧是「一份 JSON +
+  一张原图」，改一个矩形不必重写一堆 PNG；层图由客户端现切（`skeleton2d-stage.ts` 的
+  `cutLayer`），切出来的像素与卡面显示的是同一份。
+- **顶点坐标永远是整幅 uv**：层内网格把局部比例映进矩形再交给同一套蒙皮，所以骨骼、
+  锚点、雕刻三套参数在「整幅」与「分层」两种模型上说的是同一种坐标。
+- **`layer.bones` 收窄权重**：一层只绑几根骨时，`boneWeightsAt` 的候选先收紧再归一——
+  「头这层不受手臂旋转影响」是数据说的，不是代码特判的。
+
+自动分层（`core/skeleton2d/layerize.ts`）只看剪影的宽度轮廓：脖子＝上半身最细的一行、
+裆部＝一行分成两段的地方、手臂＝伸出「最窄那几行」之外的部分。它给的是一份**初稿**
+（六层 + 十二骨），跑两次逐字节相同；分不准就在编辑器里重跑或手工修。生成时宿主只写
+`autoRig: true` 的标记，真正的切图在客户端打开时做——分层要读像素，而宿主没有图像
+解码依赖，也不该为一件事拖进来一个。
+
+### skeleton2d：产物是一份模型，生成只是写一份 JSON（F2.8，v2.05）
+
+动画卡（`skeleton2d`）与媒体三兄弟**形状像、通道全不一样**，所以它从第一天就不在 `MEDIA_KINDS` 里：
+
+- **产物是文本**：`.skeleton2d.json` 描述「贴图是谁、循环多长、几组动作、网格怎么雕、骨骼怎么转」，读写走 `readArtifact` / `writeText` 那条文本路。媒体那三条路对它一条都不成立——按扩展名取 MIME（`MEDIA_MIME`）没有它的条目、原样下载等于交出去一串引擎读不懂的模型、16MB 导入上限也管不着它。所以判据只有一根指针：`SKELETON2D_KINDS` / `isSkeleton2dKind`（`kind-registry.ts`），导出、席位、生成提示词三处都读它，不手写 `'skeleton2d'`。
+- **双扩展名要在 `data` 前面判**：`detectKind` 里 `basename.endsWith('.skeleton2d.json')` 那一行必须排在「`json` → data」之前。两条地址模式（`**/*.skeleton2d.json` 与 `**/*.json`）同时命中，谁先注册谁认领；而错的那一种**不报错**，只是预览里躺着一串 JSON。
+- **工具数 18 → 19**：`canvas_generate_skeleton2d` 与媒体三个生成工具同一条纪律——名字从 `TOOL_NAMES` 取，工具注册 / 提示词段落 / 清单申报三处同源（`tests/contract.spec.ts` 与 `tools.spec.ts` 钉这一条）。
+- **模型只有一份归一入口**（`core/skeleton2d/model.ts` 的 `normalizeSkeleton2dModel`）：键按 `t` 升序、重位键收敛、`MAX_KEYS = 64`、雕刻偏移夹在 `DEFORM_MAX = 0.15`、骨骼 `parent` 只许指向数组里**更早**的那一根（先父后子，一遍线性扫就够，也天然无环）、骨骼轨道按**已收下的骨骼清单**筛、雕刻表按键名排序。
+- **序列化必须稳定**（`serializeSkeleton2dModel`）：同一份模型两次写出来逐字节相同。这不是洁癖——「内容没变就不写」「按字节判缓存」这两条都建在它上面，而它们一旦松动，症状是「保存了但没生效」那种最难查的一类。
+- **贴图是相对引用**：模型文件在 `skeleton2d/名字.skeleton2d.json`，`texture` 默认写裸文件名（同目录的 `名字.png`——模型与图一起搬目录不断链）；引用进来的上游图仍在 `images/` 时写项目根相对的 `/images/…`。`texturePathOf` 解相对路径、`textureReferenceOf` 反向拼（层数用尽就退回根相对）。
+- **生成侧引导**（`host/prompt.ts` 的 `artifactGuidance('skeleton2d')`）：产物不是文本文章、别拿文件工具去写；贴图从**引用进来的那张图**来，写相对路径；动作先用正弦节律（`cycles` / `amplitude` / `phase`），要非周期的手感再用关键帧。
 
 ### 文本节点的图文：渲染器换写 + 工作区图片路由 + 生成侧引导（v1.92）
 
@@ -831,7 +856,7 @@ interface KindEntry {
 | Host 认定      | `src/core/artifact/kind/kind-registry.ts` + `ctx.fs`    | 由扩展名与内容证据判定 `kind`，结果写进 domain 的 `cards` 记录。图片 / 视频 / 音频三个媒体 kind（v1.70）同样由**文件证据**认定，不由用户声明——`MEDIA_KINDS` 与 `isMediaKind()` 是三方（kind 表、IO 层、客户端）共读的那一根指针 |
 | Client 认领与预览 | **右栏 tab 类型注册表** `ctx.sidebarRightTabs.register()` | 按资源地址 glob 认领，用 `priority` 分档压过内置查看器        |
 
-**动画卡（v2.05）也走这两半，但它是一次「形态 ≠ 字节」的边界案例**：`live2d` 的产物是文本（一份模型 JSON），所以它既不在 `MEDIA_KINDS` 里、也不归导入与媒体导出那几条路管；它的形态判定必须排在 `data` 之前（`.live2d.json` 同时命中 `**/*.json`），指针是 `LIVE2D_KINDS` / `isLive2dKind`。详见 §五「live2d：产物是一份模型」。
+**动画卡（v2.05）也走这两半，但它是一次「形态 ≠ 字节」的边界案例**：`skeleton2d` 的产物是文本（一份模型 JSON），所以它既不在 `MEDIA_KINDS` 里、也不归导入与媒体导出那几条路管；它的形态判定必须排在 `data` 之前（`.skeleton2d.json` 同时命中 `**/*.json`），指针是 `SKELETON2D_KINDS` / `isSkeleton2dKind`。详见 §五「skeleton2d：产物是一份模型」。
 
 ```typescript
 // src/client/canvas/board/canvas-tab.ts —— 一种形态 = 一个 tab 类型
@@ -1131,20 +1156,20 @@ HTML 家族的预览是一个 `sandbox="allow-scripts"`、**不给** `allow-same
 
 **已知取舍**：只读层盖住整块视口，所以**页面自己的内层滚动容器在 `aim` 里滚不动**（滚轮到达的是只读层，默认动作只滚文档本身）；文档级滚动在 `aim` 里不受影响，在 `hold` 里连它也没有。验收判据在 `.workbuddy/e2e/element-pick.js`：所有「页面有没有动」都取自**页面自己的痕迹**（它自己的 `:hover` 计算色、它自己与委托两级的处理器计数器、`document.activeElement`、选区、滚动位置），并在开模式之前先跑一遍对照（证明这一页本来是活的）；判据一律判**增量**，不判「绝对值为零」。而「圈有没有被挪动」判的是**两个现量的差**：高亮框的视口矩形 vs 帧此刻的矩形加上元素此刻在帧里的位置（`framePoint` 一次量齐），再加一条「帧矩形一寸没变」；E2E 里 ⑦.2 那一组还会从外面往条带插槽里**塞一条 40px 的横条**再撤走——验的是「帧一旦挪窝，圈与框都跟着」这条**不变量**，而不是某一条特定提示。（修复前对照：这三条全红，帧 `top 51 → 94`。）
 
-### live2d 编辑器：一个舞台、两种状态、四张编辑镜（F2.8，v2.05–v2.07）
+### skeleton2d 编辑器：一个舞台、两种状态、四张编辑镜（F2.8，v2.05–v2.07）
 
-**看的那一半只有一处算术。** `live2d-stage.ts` 是 WebGL1 的最小舞台：一张贴图 + 24×24 网格 + 三角索引，每帧把 `poseGridAt` 算出的顶点位置写进 attribute buffer。`use-live2d.tsx` 是它的 React 壳（`requestAnimationFrame` 里推进 `clockRef`），**卡面（`live2d-face.tsx`）与全屏共用同一个 hook**——所以「卡上看到的」与「点开看到的」不可能不一样。
+**看的那一半只有一处算术。** `skeleton2d-stage.ts` 是 WebGL1 的最小舞台：一张贴图 + 24×24 网格 + 三角索引，每帧把 `poseGridAt` 算出的顶点位置写进 attribute buffer。`use-skeleton2d.tsx` 是它的 React 壳（`requestAnimationFrame` 里推进 `clockRef`），**卡面（`skeleton2d-face.tsx`）与全屏共用同一个 hook**——所以「卡上看到的」与「点开看到的」不可能不一样。
 
-**编辑与预览是同一个弹窗的两个状态**（`live2d-viewer.tsx` → `live2d-editor.tsx`），不是两个页面：切换模式时舞台不重建、贴图不重取、播放时间不重置。
+**编辑与预览是同一个弹窗的两个状态**（`skeleton2d-viewer.tsx` → `skeleton2d-editor.tsx`），不是两个页面：切换模式时舞台不重建、贴图不重取、播放时间不重置。
 
 **四张编辑镜，各有一份纯模块**（都不碰 React，node 判据直接跑）：
 
 | 模式 | 纯模块 | 认什么 |
 | --- | --- | --- |
-| `params` | `live2d-editor-layout.ts` | 贴合盒（`containLayout`，与舞台的 contain 同一句算术）、画面点 → 锚点（`anchorFromPoint`） |
-| `mesh` | `live2d-mesh.ts` | 顶点拾取半径（8px）、拖拽的 UV 换算、偏移写回稀疏表（键是 `col,row`） |
-| `timeline` | `live2d-timeline.ts` | 标尺高度、轨道的矩形、`xToTime` / `yToValue`、播放头命中 |
-| `bones` | `live2d-bones.ts` | 关节拾取（14px，比网格顶点宽——关节稀疏，点中就该抓住）、`boneUVFromPoint`、`nextBoneName`（取最小空号）、骨架叠层 |
+| `params` | `skeleton2d-editor-layout.ts` | 贴合盒（`containLayout`，与舞台的 contain 同一句算术）、画面点 → 锚点（`anchorFromPoint`） |
+| `mesh` | `skeleton2d-mesh.ts` | 顶点拾取半径（8px）、拖拽的 UV 换算、偏移写回稀疏表（键是 `col,row`） |
+| `timeline` | `skeleton2d-timeline.ts` | 标尺高度、轨道的矩形、`xToTime` / `yToValue`、播放头命中 |
+| `bones` | `skeleton2d-bones.ts` | 关节拾取（14px，比网格顶点宽——关节稀疏，点中就该抓住）、`boneUVFromPoint`、`nextBoneName`（取最小空号）、骨架叠层 |
 
 **冻结规则按模式给，不按开关给**：雕刻一律把时间冻住（在动的角色上雕不出你要的形状）、时间线按当前播放 / 暂停、参数与骨骼常放（后者的叠层永远画 **rest 姿态**——绑骨是在静止的角色上做的，动画里的实时姿态交给左边的舞台）。
 
@@ -1152,11 +1177,11 @@ HTML 家族的预览是一个 `sandbox="allow-scripts"`、**不给** `allow-same
 
 1. **防抖 600ms 自动写** + **卸载时冲刷**：只做前者，最后一次改动会在切走时丢；
 2. **写完 `readArtifact` 再 `adopt`**：弹窗那份 view 不重读，盘上是新的、屏幕上是旧的；
-3. **缓存按 `(projectId, cardId)` 前缀失效**（`invalidateLive2dModel`）：缓存键从前只含字节，等长改动（改一个数值）不失效——这是「保存成功、看着没变」最隐蔽的一种。
+3. **缓存按 `(projectId, cardId)` 前缀失效**（`invalidateSkeleton2dModel`）：缓存键从前只含字节，等长改动（改一个数值）不失效——这是「保存成功、看着没变」最隐蔽的一种。
 
 **动作与骨骼的曲线是同一扇门**：`curve.ts` 的 `sampleKeys`（余弦插值 + 尾键环绕首键）既服务三组动作的关键帧，也服务骨骼的旋转轨道；`motionValueAt` 是分岔点——有键走键、无键走正弦（整周期收尾，循环处不跳）。`curve.ts` 存在的原因是循环依赖：`rig.ts` 要算骨骼、`bones.ts` 要用曲线，把曲线抽出来两边都只往下依赖。`rig.ts` 仍然**再导出**那几个名字（`sampleKeys` / `motionValueAt`），所以原有消费方一行都不用改。
 
-**骨骼层的算术收在 `core/live2d/bones.ts`**：`bonePosesAt`（父动子随：子原点 = 父世界原点 + R(父角)·(rest 差)，子角 = 父角 + 自己）、`boneWeightsAt`（距离平方反比取最近两根再归一）、`skinAt`（线性混合蒙皮）。`rig.ts` 里那张「蒙皮 → 三组动作 → 雕刻」的次序**只在 `poseGridAt` 写一遍**，`poseAt` 是单点的同一套（它没有顶点序号，所以雕刻表管不到它——这是单点形态的既定边界，不是遗漏）。
+**骨骼层的算术收在 `core/skeleton2d/bones.ts`**：`bonePosesAt`（父动子随：子原点 = 父世界原点 + R(父角)·(rest 差)，子角 = 父角 + 自己）、`boneWeightsAt`（距离平方反比取最近两根再归一）、`skinAt`（线性混合蒙皮）。`rig.ts` 里那张「蒙皮 → 三组动作 → 雕刻」的次序**只在 `poseGridAt` 写一遍**，`poseAt` 是单点的同一套（它没有顶点序号，所以雕刻表管不到它——这是单点形态的既定边界，不是遗漏）。
 
 ## 九、文件读写与编辑回流
 
@@ -1450,9 +1475,9 @@ v1.66 上线的当天就撞回一句同族的真机反馈：「设计卡片导�
 
 **变异七处，逐条验红**：删掉 `isMediaKind` 那一支 ⇒ 分派 2 条红；只看空 `dataUrl`、不看 `truncated` ⇒ 行为 1 条 + 源码 1 条红；下载名改用产物词干 ⇒ 3 条红；`downloadBytes` 去掉 `ready` 条件 ⇒ 接线 1 条红；`atob` 之后不填字节 ⇒ 字节比对 1 条红；`truncated` 的口气改成 `ok` ⇒ 1 条红；扩展名转小写 ⇒ 1 条红。其中**第二条第一次只红了一条源码判据**——夹具当时把 `truncated: true` 与空 `dataUrl` 写在了一起，两件事互为掩护；把夹具改成「举旗但字节还在」之后同一变异精确命中行为那条。
 
-### live2d 的两条出路：雪碧图逐像素，骨架包可编辑（F10.1 / F10.5，v2.07）
+### skeleton2d 的两条出路：雪碧图逐像素，骨架包可编辑（F10.1 / F10.5，v2.07）
 
-动画卡的导出是**菜单**（`LIVE2D_EXPORT_FORMATS = ['sheet', 'bones']`），因为它给的**不是同一个东西**：一份逐像素等于画布、一份可继续编辑但不含非骨骼形变。分派形状与文本 / 设计同一条（`export-plan.ts` 的 `live2d: (format) => void`），而**必须排在媒体那支之前**——`isLive2dKind` 与 `isMediaKind` 是两根指针，写反了这张卡会落到「原样下载」上，导出一份引擎读不懂的 JSON。
+动画卡的导出是**菜单**（`SKELETON2D_EXPORT_FORMATS = ['sheet', 'bones']`），因为它给的**不是同一个东西**：一份逐像素等于画布、一份可继续编辑但不含非骨骼形变。分派形状与文本 / 设计同一条（`export-plan.ts` 的 `skeleton2d: (format) => void`），而**必须排在媒体那支之前**——`isSkeleton2dKind` 与 `isMediaKind` 是两根指针，写反了这张卡会落到「原样下载」上，导出一份引擎读不懂的 JSON。
 
 **一、帧序列雪碧图。** `spritesheetPlanOf` 是纯函数（12fps、一个循环烘到底、≤240 帧、8 列、单帧目标 512 宽、整张任一边 ≤8192 就等比缩单帧）。渲染用一块离屏 canvas 跑 WebGL 舞台（`preserveDrawingBuffer: true`——不开的话 `drawImage` 读到的可能是已被下一帧清掉的缓冲），逐帧 `drawImage` 拼进 2D 画布，`toBlob` 之后连同 `sheet.json`（布局与节律）与 `README.txt`（Godot / Unity / 微信小游戏各一段能照抄的用法）压成 zip。**帧数与节律同源**：`fps × loop` 向上取整、至少 2 帧；播放器按 `time * fps % count` 换帧就正好接上，因为动作曲线是正弦整周期、关键帧环绕插值。
 

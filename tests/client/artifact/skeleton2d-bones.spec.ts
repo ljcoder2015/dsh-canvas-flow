@@ -7,7 +7,7 @@
  * 3. **取名**：`b1`、`b2`…取最小的空号，删过再建不撞名。
  */
 import { describe, expect, it } from 'vitest'
-import { BONE_PICK_RADIUS_PX, bonePixel, boneUVFromPoint, nearestBone, nextBoneName } from '../../../src/client/artifact/viewers/live2d/live2d-bones.ts'
+import { BONE_PICK_RADIUS_PX, bonePixel, boneUVFromPoint, nearestBone, nextBoneName } from '../../../src/client/artifact/viewers/skeleton2d/skeleton2d-bones.ts'
 
 const BOX = { left: 10, top: 20, width: 200, height: 100 }
 

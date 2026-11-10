@@ -1,16 +1,16 @@
 /**
- * dsh-canvas — live2d 编辑器**骨骼模式**的纯算术（零依赖、零 React）。
+ * dsh-canvas — skeleton2d 编辑器**骨骼模式**的纯算术（零依赖、零 React）。
  *
  * 骨骼模式把编辑台变成最小的绑骨台：点击画面空白处落一枚关节（父级＝当前选中的那
  * 枚），拖动调位置，面板里改父级 / 删除。屏幕上只画 **rest 姿态**的骨架——绑骨是
  * 在「静止的角色」上做的，动画里的实时姿态交给左侧的 WebGL 画布。
  *
- * 坐标约定与 `live2d-mesh.ts` 同一条：uv（0–1，y 向下），贴合盒由 `containLayout`
- * 给出；变形数学本体在 `core/live2d/bones.ts`，这里只认屏幕。
+ * 坐标约定与 `skeleton2d-mesh.ts` 同一条：uv（0–1，y 向下），贴合盒由 `containLayout`
+ * 给出；变形数学本体在 `core/skeleton2d/bones.ts`，这里只认屏幕。
  */
 
-import type { Live2dBone } from '../../../../core/live2d/model.ts'
-import type { ContainBox } from './live2d-editor-layout.ts'
+import type { Skeleton2dBone } from '../../../../core/skeleton2d/model.ts'
+import type { ContainBox } from './skeleton2d-editor-layout.ts'
 
 /** 关节的拾取半径（像素）：比网格顶点宽——关节稀疏，点中了就该抓住。 */
 export const BONE_PICK_RADIUS_PX = 14
@@ -30,13 +30,13 @@ export function bonePixel(bone: { x: number; y: number }, box: ContainBox): { x:
 export function nearestBone(
   px: number,
   py: number,
-  bones: readonly Live2dBone[],
+  bones: readonly Skeleton2dBone[],
   box: ContainBox,
 ): number | undefined {
   let best = -1
   let bestDistance = BONE_PICK_RADIUS_PX
   for (let index = 0; index < bones.length; index += 1) {
-    const point = bonePixel(bones[index] as Live2dBone, box)
+    const point = bonePixel(bones[index] as Skeleton2dBone, box)
     const distance = Math.hypot(px - point.x, py - point.y)
     if (distance < bestDistance) {
       bestDistance = distance
@@ -56,7 +56,7 @@ export function boneUVFromPoint(px: number, py: number, box: ContainBox): { x: n
 }
 
 /** 下一根骨骼的名字：`b1`、`b2`…取最小的空号（删过骨骼也不重名）。 */
-export function nextBoneName(existing: readonly Live2dBone[]): string {
+export function nextBoneName(existing: readonly Skeleton2dBone[]): string {
   const used = new Set(existing.map((bone) => bone.name))
   for (let index = 1; index <= existing.length + 1; index += 1) {
     if (!used.has(`b${index}`)) return `b${index}`
@@ -71,7 +71,7 @@ export function nextBoneName(existing: readonly Live2dBone[]): string {
 export function drawBonesOverlay(
   ctx: CanvasRenderingContext2D,
   box: ContainBox,
-  bones: readonly Live2dBone[],
+  bones: readonly Skeleton2dBone[],
   selected: number | undefined,
 ): void {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height)
@@ -81,11 +81,11 @@ export function drawBonesOverlay(
   ctx.lineWidth = 2
   ctx.beginPath()
   for (let index = 0; index < bones.length; index += 1) {
-    const bone = bones[index] as Live2dBone
+    const bone = bones[index] as Skeleton2dBone
     if (bone.parent === undefined) continue
     const parentIndex = bones.findIndex((entry) => entry.name === bone.parent)
     if (parentIndex < 0) continue
-    const from = bonePixel(bones[parentIndex] as Live2dBone, box)
+    const from = bonePixel(bones[parentIndex] as Skeleton2dBone, box)
     const to = bonePixel(bone, box)
     ctx.moveTo(from.x, from.y)
     ctx.lineTo(to.x, to.y)
@@ -93,7 +93,7 @@ export function drawBonesOverlay(
   ctx.stroke()
   // 关节点。
   for (let index = 0; index < bones.length; index += 1) {
-    const { x, y } = bonePixel(bones[index] as Live2dBone, box)
+    const { x, y } = bonePixel(bones[index] as Skeleton2dBone, box)
     const isSelected = index === selected
     ctx.beginPath()
     ctx.arc(x, y, isSelected ? 7 : 5, 0, Math.PI * 2)
