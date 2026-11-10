@@ -96,7 +96,7 @@ function ChipGroup({
           const active = current === option.value
           return (
             <button
-              className="dsh-canvas-chip"
+              className="dsh-canvas-tier"
               role="menuitemradio"
               aria-checked={active}
               data-current={active ? 'true' : 'false'}

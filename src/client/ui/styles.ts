@@ -447,14 +447,17 @@ body[data-ds-dark-theme] .dsh-canvas-root{
 /* 参数面板的档位 chip（画质 / 清晰度 / 背景 / 比例 / 数量）：一行三列、等宽平分。
    面板的最小宽度按「三列都放得下最长档位名」倒推（3×104 + 间距 + 内边距），
    不靠压缩按钮迁就容器；nowrap 保证档位名不折行挤压。选中的那颗用主题蓝描边
-   说话——与设计面板的档位按钮同一条视觉纪律，不发明第二种高亮。 */
+   说话——与设计面板的档位按钮同一条视觉纪律，不发明第二种高亮。
+   类名刻意是 .dsh-canvas-tier 而不是复用 .dsh-canvas-chip：后者是提示词输入框的
+   引用 chip（自适应宽、右上角挂删除钮），两边长相与行为都不同——同名会让样式表
+   靠后的这条把引用 chip 的宽度盖成 100%（2026-11-09 真踩）。 */
 .dsh-canvas-chipgroup{padding:0 8px 4px}
 .dsh-canvas-chips{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
-.dsh-canvas-chip{display:inline-flex;align-items:center;justify-content:center;gap:5px;width:100%;height:24px;padding:0 8px;
+.dsh-canvas-tier{display:inline-flex;align-items:center;justify-content:center;gap:5px;width:100%;height:24px;padding:0 8px;
   border:1px solid var(--dsh-mid);border-radius:6px;background:var(--dsh-card);color:var(--dsh-fg-2);
   font:11px/22px var(--dsh-font);cursor:pointer;white-space:nowrap}
-.dsh-canvas-chip:hover{border-color:var(--dsh-fg-3);color:var(--dsh-fg)}
-.dsh-canvas-chip[data-current=true]{border-color:var(--dsh-breeze);color:var(--dsh-fg);background:var(--dsh-hl)}
+.dsh-canvas-tier:hover{border-color:var(--dsh-fg-3);color:var(--dsh-fg)}
+.dsh-canvas-tier[data-current=true]{border-color:var(--dsh-breeze);color:var(--dsh-fg);background:var(--dsh-hl)}
 .dsh-canvas-chipshape{flex:none;border:1.5px solid currentColor;border-radius:2px;display:inline-block}
 
 /* 放大态提示词弹窗：这不是另一个界面，是**同一个控制台换了个壳**——里面装的还是那三行
