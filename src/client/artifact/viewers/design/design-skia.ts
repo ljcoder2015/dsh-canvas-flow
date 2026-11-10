@@ -352,7 +352,7 @@ export async function createSkiaBackend(
 
   let activeSurface = surface
   return {
-    paint(viewport, width, height, dpr, selectedIds, sceneVersion, currentPageId, hoveredId) {
+    paint(viewport, width, height, dpr, selectedIds, sceneVersion, currentPageId, hoveredId, preview) {
       if (disposed) return
       const deviceWidth = Math.round(width * dpr)
       const deviceHeight = Math.round(height * dpr)
@@ -379,7 +379,13 @@ export async function createSkiaBackend(
       // 选中框与悬停高亮由渲染器原生画（overlays 每帧叠加，不进场景
       // picture）；sceneVersion 来自 editor 的变更计数——图没变时 picture
       // cache 逐帧重放，变了才重录。
-      renderer.render(graph, selectedIds as Set<string>, { hoveredNodeId: hoveredId }, sceneVersion, 'full')
+      // 拖画橡皮筋与钢笔预览同走 overlays（v1.99）：penState 是引擎侧的
+      // 顶点账本（渲染器原生认这份形状），marquee 是 viewer 拖画中的矩形。
+      renderer.render(graph, selectedIds as Set<string>, {
+        hoveredNodeId: hoveredId,
+        ...(preview?.marquee != null ? { marquee: { ...preview.marquee } } : {}),
+        ...(preview?.pen != null ? { penState: preview.pen } : {}),
+      }, sceneVersion, 'full')
     },
     dispose() {
       if (disposed) return

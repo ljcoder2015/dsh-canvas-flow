@@ -94,15 +94,66 @@ export interface DesignBackend {
     sceneVersion: number,
     currentPageId: string,
     hoveredId: string | null,
+    preview?: DesignRenderPreview,
   ): void
   /** Release engine resources (GL contexts, fonts, caches). */
   dispose(): void
 }
 
+/**
+ * Dock 上的绘图工具（v1.99，Figma 同名语义）：
+ *
+ * - `move` = 选择/拖移（默认笔，画布上的选点、拖移都归它）；
+ * - `frame`/`section`/四种基本形 = **拖画落形**：按下圈一个矩形，松手落成对应节点；
+ * - `pen` = 点一下加一个顶点，收笔（闭合或双击）落成矢量节点；
+ * - `text` = 点一下落一个文本节点（内容在属性面板改）。
+ *
+ * `image` 不在这里——图片工具只是个菜单（插入文件 / AI 生成 / 引用画布图），不是一支笔。
+ */
+export type DesignTool =
+  | 'move'
+  | 'frame'
+  | 'section'
+  | 'rectangle'
+  | 'ellipse'
+  | 'line'
+  | 'polygon'
+  | 'star'
+  | 'pen'
+  | 'text'
+
+/** 拖画落形的落点：世界坐标，左上角原点 + 正宽高（viewer 负责归一化）。 */
+export interface DesignShapeRect {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+/**
+ * 钢笔的预览账本（渲染器 overlay 原生认这份形状）：顶点 + 已落线段 + 指针端的
+ * 橡皮线。形状照抄上游 penState，加两个指针字段——引擎从 editor.state 拼出来。
+ */
+export interface DesignPenPreview {
+  vertices: { x: number; y: number }[]
+  segments: { start: number; end: number; tangentStart: { x: number; y: number }; tangentEnd: { x: number; y: number } }[]
+  dragTangent: { x: number; y: number } | null
+  closingToFirst: boolean
+  pendingClose?: boolean
+  cursorX?: number
+  cursorY?: number
+}
+
+/** 拖画中的预览（橡皮筋 + 钢笔账本）。 */
+export interface DesignRenderPreview {
+  marquee?: DesignShapeRect | null
+  pen?: DesignPenPreview | null
+}
+
 /** What the viewer drives the engine with: one paint, one fit, one release. */
 export interface DesignEngine {
   /** Paint one frame at CSS size `width×height` (device pixels derived from `dpr`). */
-  render(viewport: DesignViewport, width: number, height: number, dpr: number): void
+  render(viewport: DesignViewport, width: number, height: number, dpr: number, preview?: DesignRenderPreview): void
   /** The zoom-to-fit camera for a viewport of the given CSS size. */
   fit(width: number, height: number): DesignViewport
   /** Release engine resources (GL contexts, fonts, caches). */
@@ -112,6 +163,11 @@ export interface DesignEngine {
   //    屏→世界由引擎换算），改稿全部走 headless editor：选中/undo/布局都长在那边。
   /** 命中测试：屏幕点 → 最上层节点 id（没打中返回 null）。 */
   pick(sx: number, sy: number, viewport: DesignViewport): string | null
+  /**
+   * 框选命中：世界坐标矩形 → 当前页顶层里**矩形与之相交**的可选中节点 id
+   * （可见、未锁）。嵌在容器里的子层不单独命中——框到的是装着它们的容器。
+   */
+  pickRect(rect: { x: number; y: number; width: number; height: number }): string[]
   /** 悬停高亮（编辑模式指针跟随）：null = 清除。id 变化才重画。 */
   hover(id: string | null): void
   /** 当前选中的节点 id。 */
@@ -130,6 +186,37 @@ export interface DesignEngine {
   updateProps(id: string, props: DesignNodeProps): boolean
   /** 删除当前选中（带 undo）。 */
   deleteSelection(): void
+
+  // —— 绘图工具（v1.99）。工具的 UI 状态归 viewer，引擎只管笔落下之后的事。
+  /** 当前笔。 */
+  tool(): DesignTool
+  /** 换笔：从钢笔离开时撤销没画完的顶点（不留孤儿账本）。 */
+  setTool(tool: DesignTool): void
+  /**
+   * 拖画落形（`tool` 必须是落形笔；带 undo、默认填充由上游给）。返回新节点 id。
+   *
+   * 一次性调用＝{@link beginShape} + {@link updateShapeRect} + {@link endShape}
+   * 三步捏在一起；分步是给拖画预览用的——**活节点**方案，拖画中画的就是真节点。
+   */
+  createShape(tool: DesignTool, rect: DesignShapeRect): string | null
+  /** 起一笔活节点（真实节点、默认外观；不压 undo——账在收手 {@link endShape} 一笔结清）。 */
+  beginShape(tool: DesignTool, point: { x: number; y: number }): string | null
+  /** 拖画中的一帧：活节点几何直写（不付 undo）。 */
+  updateShapeRect(id: string, rect: DesignShapeRect): void
+  /** 收笔：以最终几何压一条 undo 并选中。返回节点 id（没活账时 `null`）。 */
+  endShape(): string | null
+  /** 点一下落一个文本节点（占位内容「文本」，内容在属性面板改）。返回新节点 id。 */
+  createTextAt(x: number, y: number): string
+  /** 钢笔落一针：近首点已闭合时收笔（返回 `done`，落成矢量节点）；否则加一个顶点。 */
+  penDown(x: number, y: number): 'vertex' | 'done'
+  /** 钢笔首点的世界坐标（没有账本时 `null`）——viewer 拿它算「指针悬在首点上没」。 */
+  penFirstVertex(): { x: number; y: number } | null
+  /** 钢笔悬停：画预览的橡皮线；`closing` = 指针悬在首点上（提示可闭合）。 */
+  penHover(x: number, y: number, closing: boolean): void
+  /** 钢笔收笔（双击/回车）：有顶点账就落成矢量节点，没有就清账本。 */
+  penFinish(): void
+  /** 钢笔弃笔（Esc）：账本清空，什么都不落。 */
+  penAbort(): void
   undo(): void
   redo(): void
   /** 撤销/重做还有没有一步可走（HUD 那两枚按钮的禁用判据）。 */

@@ -25,7 +25,7 @@
  * 有两把钥匙：回读到产物真的变了（并把新产物 adopt 进来），或者兜底时限到点。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { ReactElement } from 'react'
+import type { ReactElement, ReactNode } from 'react'
 import type { ViewerProps, ViewerRegistration } from '../types.ts'
 import type { BoardSnapshot } from '../../../../types.ts'
 import { useChrome, Slot, useEscapeSink } from '../../chrome.tsx'
@@ -47,14 +47,16 @@ import {
 } from './design-font-progress.ts'
 import { createFrameGate, type FrameGate } from './design-frame-gate.ts'
 import { designPhaseOf, type DesignPhase } from './design-phase.ts'
-import { DESIGN_SIDE_CLASS, DesignSidePanels, FrameIcon } from './design-panels.tsx'
+import { DESIGN_SIDE_CLASS, DesignSidePanels, FrameIcon, SectionIcon } from './design-panels.tsx'
 import type { DesignSelectMode } from './design-panels.tsx'
 import type {
   DesignEngine,
   DesignGeometry,
   DesignHistoryState,
   DesignLayerNode,
+  DesignShapeRect,
   DesignSnapshot,
+  DesignTool,
   DesignViewport,
   EngineOutcome,
 } from './design-engine-types.ts'
@@ -193,7 +195,7 @@ function containersUnder(nodes: readonly DesignLayerNode[]): DesignLayerNode[] {
  * Esc 也在这一批里：它退的是这一层的选区（见下面的 onKeyDown），没收住的话背后的画布
  * 也会跟着收一下菜单。**它不再关弹窗**——这一面根本不用 Esc 关窗（`useEscapeSink`）。
  */
-const DESIGN_KEYS = new Set([' ', 'w', 'a', 's', 'd', 'q', 'e', 'delete', 'backspace', 'escape'])
+const DESIGN_KEYS = new Set([' ', 'w', 'a', 's', 'd', 'q', 'e', 'delete', 'backspace', 'escape', 'enter', 'v', 'f', 'r', 'o', 'l', 'p', 't'])
 
 /**
  * 选中框上的八枚缩放手柄：位置用手柄在**节点自身坐标系**里的方向表示（两维各取 −1/0/1）。
@@ -276,8 +278,8 @@ function HistoryIcon({ forward }: { forward: boolean }): ReactElement {
   )
 }
 
-/** 「插图」按钮的图片 icon：山与太阳的经典图形（描边风格与 HistoryIcon 同一套）。 */
-function ImageIcon(): ReactElement {
+/** dock 工具图标：14×14 描边，与 HistoryIcon / ImageIcon 同一套画法。 */
+function ToolGlyph({ children }: { children: ReactNode }): ReactElement {
   return (
     <svg
       viewBox="0 0 24 24"
@@ -291,24 +293,128 @@ function ImageIcon(): ReactElement {
       aria-hidden="true"
       style={{ display: 'block' }}
     >
-      <rect x="3" y="3" width="18" height="18" rx="2" />
-      <circle cx="9" cy="9" r="2" />
-      <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" />
+      {children}
+    </svg>
+  )
+}
+
+/** 移动工具：Figma 那枚斜指针。 */
+function MoveIcon(): ReactElement {
+  return (
+    <ToolGlyph>
+      <path d="M5 3.5 18.5 11.2l-6 1.6-2.6 5.7L5 3.5Z" />
+    </ToolGlyph>
+  )
+}
+
+/** 容器/区域两枚走图层面板同一族（FrameIcon / SectionIcon，来自 design-panels）。 */
+/** 矩形（也当矩形工具的主脸）。 */
+function RectIcon(): ReactElement {
+  return (
+    <ToolGlyph>
+      <rect x="4.5" y="4.5" width="15" height="15" rx="1.5" />
+    </ToolGlyph>
+  )
+}
+
+/** 椭圆。 */
+function EllipseIcon(): ReactElement {
+  return (
+    <ToolGlyph>
+      <circle cx="12" cy="12" r="8" />
+    </ToolGlyph>
+  )
+}
+
+/** 直线。 */
+function LineIcon(): ReactElement {
+  return (
+    <ToolGlyph>
+      <path d="M5 19 19 5" />
+    </ToolGlyph>
+  )
+}
+
+/** 三角形（多边形笔，POLYGON 默认 3 针）。 */
+function PolygonIcon(): ReactElement {
+  return (
+    <ToolGlyph>
+      <path d="M12 4.5 20 19H4L12 4.5Z" />
+    </ToolGlyph>
+  )
+}
+
+/** 星形。 */
+function StarIcon(): ReactElement {
+  return (
+    <ToolGlyph>
+      <path d="M12 4 14.2 9.5 20.1 9.9 15.5 13.6 17 19.4 12 16.2 7 19.4 8.5 13.6 3.9 9.9 9.8 9.5Z" />
+    </ToolGlyph>
+  )
+}
+
+/** 图片工具主脸：山与太阳（与图层面板的图片徽标同一族）。 */
+function ImageIcon(): ReactElement {
+  return (
+    <ToolGlyph>
+      <rect x="3.5" y="3.5" width="17" height="17" rx="2.5" />
+      <circle cx="9" cy="9" r="1.8" />
+      <path d="m20.5 15.5-3.6-3.6a1.7 1.7 0 0 0-2.4 0L6.5 20" />
+    </ToolGlyph>
+  )
+}
+
+/** 钢笔：斜握的钢笔（笔杆 + 笔尖缝线），不是 nib 那一枚。 */
+function PenIcon(): ReactElement {
+  return (
+    <ToolGlyph>
+      <path d="M20.2 3.8a2.05 2.05 0 0 0-2.9 0L4.6 16.5a2 2 0 0 0-.5.9l-1.1 3.6a.5.5 0 0 0 .6.6l3.6-1.1a2 2 0 0 0 .9-.5L20.7 6.7a2.05 2.05 0 0 0-.5-2.9Z" />
+      <path d="m14.5 6.5 3 3" />
+    </ToolGlyph>
+  )
+}
+
+/** 文本：一枚 T。 */
+function TextIcon(): ReactElement {
+  return (
+    <ToolGlyph>
+      <path d="M5 6h14M12 6v13" />
+    </ToolGlyph>
+  )
+}
+
+/** 下拉小箭头（工具按钮右侧那枚）。 */
+function ChevronIcon(): ReactElement {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      width="9"
+      height="9"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2.4"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ display: 'block' }}
+    >
+      <path d="m6 9 6 6 6-6" />
     </svg>
   )
 }
 
 /**
- * 画布顶部中间那条 dock：撤销 / 重做 / 单选 / 多选，以及图片图层（v1.96）的三个入口——
- * 插入本地图片、AI 生成、引用画布上已有的图片产物。
+ * 画布顶部中间那条 dock（v1.99 排成 Figma 的工具条）：撤销 / 重做，然后是一排
+ * **笔**——移动（下拉带单选/多选）、容器（下拉带容器/区域）、矩形（下拉带
+ * 椭圆/直线/多边形/星形）、钢笔、文本、图片（下拉带 插入文件 / AI 生成 / 引用画布图）。
  *
- * 按钮的语气**不一样**，这是有意的：
- * - 撤销、重做是**一动就走**的动作（按下去办完事，键面上不留痕迹），所以它们没有持续高亮，
- *   只有按不动的那种灰（没得退/没得进时）。
- * - 单选、多选是**现在在哪一面**，所以走 radio 语义：aria-checked 一直亮着，永远有一枚是
- *   亮的（默认单选）。
- * - 图片那三枚是**要展开再办事**的：生成与引用各自展开一条小面板（提示词 / 画布图片清单），
- *   插入直接开文件选择器。三种来源殊途同归——字节交到引擎手里，落成 IMAGE 填充的图层。
+ * 几组按钮的语气**不一样**，这是有意的：
+ * - 撤销、重做是**一动就走**的动作（按下去办完事，键面上不留痕迹），所以它们没有持续
+ *   高亮，只有按不动的那种灰（没得退/没得进时）。
+ * - 带下拉的工具是**split 按钮**：点主脸 = 直接拿当前那一支笔，点小箭头 = 换同组的另一支
+ *   ——换上的那支会把主脸换掉（Figma 的规矩）。
+ * - 图片那格不是笔：它的下拉全是「要展开再办事」的入口（生成与引用各自展开一条小面板，
+ *   插入直接开文件选择器），三种来源殊途同归——字节交到引擎手里，落成 IMAGE 填充的图层。
  *
  * 撤销/重做在键盘上是同一条路（⌘Z / ⇧⌘Z，见 `stepHistory`）；摆在 dock 上是因为画布之外
  * 没有第二处能让人发现它们。
@@ -320,13 +426,58 @@ interface ReferenceImage {
   file: string
 }
 
+/** dock 上能展开下拉的那几枚（其余工具单枚一个、没有同组兄弟）。 */
+type DockFlyout = 'frame' | 'rect' | 'image'
+
+/** 形状组各支笔的说法（主脸提示语跟着最后那支换）。 */
+const RECT_FACE_LABELS: Record<'rectangle' | 'ellipse' | 'line' | 'polygon' | 'star', string> = {
+  rectangle: '矩形',
+  ellipse: '椭圆',
+  line: '直线',
+  polygon: '三角形',
+  star: '星形',
+}
+
+/** 一枚下拉项：脸 + 说法 + 选中态（工具类项有 radio 语义，入口类项没有）。 */
+function FlyoutItem({
+  face,
+  label,
+  hint,
+  on,
+  checked,
+  onPick,
+}: {
+  face: ReactNode
+  label: string
+  hint: string
+  on: boolean
+  /** radio 语义的选中态（undefined = 纯入口项，不标）。 */
+  checked?: boolean
+  onPick: () => void
+}): ReactElement {
+  return (
+    <button
+      type="button"
+      className={['dsh-canvas-design-flyout-item', on ? 'is-active' : ''].filter(Boolean).join(' ')}
+      role={checked === undefined ? undefined : 'radio'}
+      aria-checked={checked}
+      title={hint}
+      onClick={onPick}
+    >
+      <span className="dsh-canvas-design-flyout-check" aria-hidden="true">{checked === true ? '✓' : ''}</span>
+      <span className="dsh-canvas-design-flyout-face">{face}</span>
+      <span>{label}</span>
+    </button>
+  )
+}
+
 function DesignDock({
   history,
   canStep,
   locked,
-  selectMode,
+  tool,
+  onTool,
   onStep,
-  onSelectMode,
   onInsertFiles,
   onGenerate,
   listReferenceImages,
@@ -335,11 +486,12 @@ function DesignDock({
   history: DesignHistoryState
   /** 这一步现在走不走得动（改稿在跑时不作数）。 */
   canStep: boolean
-  /** 改稿圈在跑（AI 正在写这份文档）：图片图层也是改稿，一并锁住。 */
+  /** 改稿圈在跑（AI 正在写这份文档）：落形与图片都是改稿，一并锁住。 */
   locked: boolean
-  selectMode: DesignSelectMode
+  /** 手里正握着的笔（engine 的 `tool()` 是同一份的只读镜像）。 */
+  tool: DesignTool
+  onTool: (tool: DesignTool) => void
   onStep: (forward: boolean) => void
-  onSelectMode: (mode: DesignSelectMode) => void
   /** 插入本地图片：返回一句报错，或 `null` = 成功。 */
   onInsertFiles: (files: readonly File[]) => Promise<string | null>
   /** AI 生成一张图并落层：返回一句报错，或 `null` = 成功。 */
@@ -350,11 +502,13 @@ function DesignDock({
   onReference: (file: string) => Promise<string | null>
 }): ReactElement {
   const [panel, setPanel] = useState<'none' | 'generate' | 'reference'>('none')
+  const [flyout, setFlyout] = useState<DockFlyout | null>(null)
   const [prompt, setPrompt] = useState('')
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | null>(null)
   const [images, setImages] = useState<ReferenceImage[] | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
 
   // 结果一句话留 6 秒：成功不占地方，失败看得完（比 toast 少一套壳）。
   useEffect(() => {
@@ -362,6 +516,17 @@ function DesignDock({
     const timer = window.setTimeout(() => setNotice(null), 6000)
     return () => window.clearTimeout(timer)
   }, [notice])
+
+  // 下拉开着时点外面（画布、侧栏）就收：dock 自己的 pointerdown 有 stopPropagation，
+  // 不会漏出去，所以这里用捕获档在 document 上拦。
+  useEffect(() => {
+    if (flyout === null) return
+    const close = (event: PointerEvent): void => {
+      if (wrapRef.current?.contains(event.target as Node) !== true) setFlyout(null)
+    }
+    document.addEventListener('pointerdown', close, true)
+    return () => document.removeEventListener('pointerdown', close, true)
+  }, [flyout])
 
   /** 一句收场话：报错就留下，成功就收面板。 */
   const settle = (error: string | null): void => {
@@ -373,6 +538,7 @@ function DesignDock({
   }
 
   const openReference = (): void => {
+    setFlyout(null)
     const next = panel === 'reference' ? 'none' : 'reference'
     setPanel(next)
     if (next === 'reference') {
@@ -391,8 +557,32 @@ function DesignDock({
       .finally(() => setBusy(false))
   }
 
+  /** 换笔 + 收下拉（split 主脸与下拉项共用的收口）。 */
+  const pickTool = (next: DesignTool): void => {
+    setFlyout(null)
+    onTool(next)
+  }
+
+  // 组内主脸**记住最后一次挑的那支**：画完一笔切回移动笔后，主脸不弹回组里第一枚——
+  // 用户挑了三角形， dock 上就该一直露着三角形（Figma 的规矩）。手里握着组内某支时
+  // 主脸跟它走，离开后停在最后那支上。
+  const rectFaces = {
+    rectangle: <RectIcon />,
+    ellipse: <EllipseIcon />,
+    line: <LineIcon />,
+    polygon: <PolygonIcon />,
+    star: <StarIcon />,
+  } as const
+  type RectFace = keyof typeof rectFaces
+  const [lastShape, setLastShape] = useState<RectFace>('rectangle')
+  const [lastFrame, setLastFrame] = useState<'frame' | 'section'>('frame')
+  if (tool in rectFaces) setLastShape(tool as RectFace)
+  if (tool === 'frame' || tool === 'section') setLastFrame(tool)
+  const rectTool: RectFace = tool in rectFaces ? (tool as RectFace) : lastShape
+  const frameTool: 'frame' | 'section' = tool === 'section' ? 'section' : tool === 'frame' ? 'frame' : lastFrame
+
   return (
-    <div className="dsh-canvas-design-dock-wrap">
+    <div className="dsh-canvas-design-dock-wrap" ref={wrapRef}>
       <div className="dsh-canvas-design-dock" role="toolbar" aria-label="编辑工具" onPointerDown={(event) => event.stopPropagation()}>
         <button
           type="button"
@@ -413,39 +603,168 @@ function DesignDock({
           <HistoryIcon forward />
         </button>
         <span className="dsh-canvas-design-dock-sep" />
-        <div role="radiogroup" aria-label="选择方式" className="dsh-canvas-design-dock-modes">
-          <button
-            type="button"
-            role="radio"
-            aria-checked={selectMode === 'single'}
-            tabIndex={selectMode === 'single' ? 0 : -1}
-            title="单选：点一下换一个图层"
-            onClick={() => onSelectMode('single')}
-          >
-            单选
-          </button>
-          <button
-            type="button"
-            role="radio"
-            aria-checked={selectMode === 'multi'}
-            tabIndex={selectMode === 'multi' ? 0 : -1}
-            title="多选：点一下加一个图层；shift 点一下铺满两层之间的图层；AI 框按图层分段记提示词"
-            onClick={() => onSelectMode('multi')}
-          >
-            多选
-          </button>
-        </div>
-        <span className="dsh-canvas-design-dock-sep" />
-        {/* 图片图层三入口（v1.96）：插入 / 生成 / 引用。改稿圈在跑时一并锁住。 */}
+        {/* 移动：单枚笔。点选换人、shift 加选/铺一段、空手拖框选一批——不再分单选/多选两面。 */}
         <button
           type="button"
-          title="插入图片：选本地图片落成图层（可多选）"
-          aria-label="插入图片"
-          disabled={locked}
-          onClick={() => fileInputRef.current?.click()}
+          className={['dsh-canvas-design-tool-solo', tool === 'move' ? 'is-active' : ''].filter(Boolean).join(' ')}
+          title="移动：点选、拖移图层；空手拖一下框选多个（V）"
+          aria-label="移动工具"
+          aria-pressed={tool === 'move'}
+          onClick={() => pickTool('move')}
         >
-          <ImageIcon />
+          <MoveIcon />
         </button>
+        {/* 容器组（split）：容器 / 区域。 */}
+        <div className={['dsh-canvas-design-tool', tool === 'frame' || tool === 'section' ? 'is-active' : ''].filter(Boolean).join(' ')}>
+          <button
+            type="button"
+            className="dsh-canvas-design-tool-main"
+            title={frameTool === 'section' ? '区域：圈一块只管归类的地盘（拖画落形）' : '容器：圈一块裁切子图层的画板（拖画落形，F）'}
+            aria-label="容器工具"
+            disabled={locked}
+            onClick={() => pickTool(frameTool)}
+          >
+            {frameTool === 'section' ? <SectionIcon /> : <FrameIcon />}
+          </button>
+          <button
+            type="button"
+            className="dsh-canvas-design-tool-caret"
+            title="容器/区域"
+            aria-label="容器工具菜单"
+            aria-expanded={flyout === 'frame'}
+            disabled={locked}
+            onClick={() => setFlyout(flyout === 'frame' ? null : 'frame')}
+          >
+            <ChevronIcon />
+          </button>
+          {flyout === 'frame' ? (
+            <div className="dsh-canvas-design-flyout" role="radiogroup" aria-label="容器工具">
+              <FlyoutItem
+                face={<FrameIcon />}
+                label="容器"
+                hint="圈一块裁切子图层的画板（F）"
+                on={tool === 'frame'}
+                checked={tool === 'frame'}
+                onPick={() => pickTool('frame')}
+              />
+              <FlyoutItem
+                face={<SectionIcon />}
+                label="区域"
+                hint="圈一块只管归类的地盘，不裁切"
+                on={tool === 'section'}
+                checked={tool === 'section'}
+                onPick={() => pickTool('section')}
+              />
+            </div>
+          ) : null}
+        </div>
+        {/* 矩形组（split）：矩形 / 椭圆 / 直线 / 多边形 / 星形。 */}
+        <div className={['dsh-canvas-design-tool', tool in rectFaces ? 'is-active' : ''].filter(Boolean).join(' ')}>
+          <button
+            type="button"
+            className="dsh-canvas-design-tool-main"
+            title={`${RECT_FACE_LABELS[rectTool]}：拖画落形（下拉换椭圆/直线/三角形/星形）`}
+            aria-label={`${RECT_FACE_LABELS[rectTool]}工具`}
+            disabled={locked}
+            onClick={() => pickTool(rectTool)}
+          >
+            {rectFaces[rectTool]}
+          </button>
+          <button
+            type="button"
+            className="dsh-canvas-design-tool-caret"
+            title="基本形状"
+            aria-label="形状工具菜单"
+            aria-expanded={flyout === 'rect'}
+            disabled={locked}
+            onClick={() => setFlyout(flyout === 'rect' ? null : 'rect')}
+          >
+            <ChevronIcon />
+          </button>
+          {flyout === 'rect' ? (
+            <div className="dsh-canvas-design-flyout" role="radiogroup" aria-label="形状工具">
+              {(['rectangle', 'ellipse', 'line', 'polygon', 'star'] as const).map((shape) => (
+                <FlyoutItem
+                  key={shape}
+                  face={rectFaces[shape]}
+                  label={shape === 'rectangle' ? '矩形' : shape === 'ellipse' ? '椭圆' : shape === 'line' ? '直线' : shape === 'polygon' ? '三角形' : '星形'}
+                  hint={shape === 'rectangle' ? '拖画落一个矩形（R）' : shape === 'ellipse' ? '拖画落一个椭圆（O）' : shape === 'line' ? '拖画落一条直线（L）' : shape === 'polygon' ? '拖画落一个三角形' : '拖画落一颗星形'}
+                  on={tool === shape}
+                  checked={tool === shape}
+                  onPick={() => pickTool(shape)}
+                />
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <button
+          type="button"
+          className={['dsh-canvas-design-tool-solo', tool === 'pen' ? 'is-active' : ''].filter(Boolean).join(' ')}
+          title="钢笔：点一下加一个顶点，近首点再点一下闭合；双击/回车收笔，Esc 弃笔（P）"
+          aria-label="钢笔工具"
+          aria-pressed={tool === 'pen'}
+          disabled={locked}
+          onClick={() => pickTool('pen')}
+        >
+          <PenIcon />
+        </button>
+        <button
+          type="button"
+          className={['dsh-canvas-design-tool-solo', tool === 'text' ? 'is-active' : ''].filter(Boolean).join(' ')}
+          title="文本：点一下落一个文本节点，内容在右侧属性面板改（T）"
+          aria-label="文本工具"
+          aria-pressed={tool === 'text'}
+          disabled={locked}
+          onClick={() => pickTool('text')}
+        >
+          <TextIcon />
+        </button>
+        {/* 图片（纯菜单）：插入本地文件 / AI 生成 / 引用画布图——三入口换掉旧的并排三钮。 */}
+        <div className="dsh-canvas-design-tool">
+          <button
+            type="button"
+            className="dsh-canvas-design-tool-main"
+            title="图片：插入本地图片、AI 生成或引用画布上的图片产物"
+            aria-label="图片工具菜单"
+            aria-expanded={flyout === 'image'}
+            disabled={locked}
+            onClick={() => setFlyout(flyout === 'image' ? null : 'image')}
+          >
+            <ImageIcon />
+            <ChevronIcon />
+          </button>
+          {flyout === 'image' ? (
+            <div className="dsh-canvas-design-flyout" aria-label="图片入口">
+              <FlyoutItem
+                face={<ImageIcon />}
+                label="插入本地图片"
+                hint="选本地图片落成图层（可多选）"
+                on={false}
+                onPick={() => {
+                  setFlyout(null)
+                  fileInputRef.current?.click()
+                }}
+              />
+              <FlyoutItem
+                face={<TextIcon />}
+                label="AI 生成"
+                hint="写一句提示词，按这张卡的模型配置生成并落成图层"
+                on={false}
+                onPick={() => {
+                  setFlyout(null)
+                  setPanel('generate')
+                }}
+              />
+              <FlyoutItem
+                face={<FrameIcon />}
+                label="引用画布图片"
+                hint="把项目里已有的图片产物落成图层"
+                on={false}
+                onPick={openReference}
+              />
+            </div>
+          ) : null}
+        </div>
         <input
           ref={fileInputRef}
           type="file"
@@ -462,24 +781,6 @@ function DesignDock({
               .finally(() => setBusy(false))
           }}
         />
-        <button
-          type="button"
-          title="生成图片：写一句提示词，按这张卡的模型配置生成并落成图层"
-          aria-expanded={panel === 'generate'}
-          disabled={locked}
-          onClick={() => setPanel(panel === 'generate' ? 'none' : 'generate')}
-        >
-          生成
-        </button>
-        <button
-          type="button"
-          title="引用画布图片：把项目里已有的图片产物落成图层"
-          aria-expanded={panel === 'reference'}
-          disabled={locked}
-          onClick={openReference}
-        >
-          引用
-        </button>
       </div>
       {panel === 'generate' ? (
         <div className="dsh-canvas-design-dock-panel" onPointerDown={(event) => event.stopPropagation()}>
@@ -535,6 +836,9 @@ function DesignDock({
     </div>
   )
 }
+
+// 临时复现导出（排查下拉空白），结案后删除。
+export { DesignDock }
 
 export function DesignViewer({ view }: ViewerProps) {
   const chrome = useChrome()
@@ -631,11 +935,23 @@ export function DesignViewer({ view }: ViewerProps) {
   // 编辑模式的抓手开关（空格）。ref 供 pointerdown 即时判断，state 只驱动光标。
   const spaceRef = useRef(false)
   const [spaceHeld, setSpaceHeld] = useState(false)
-  // 点选口径（dock 上那对单选/多选）：ref 供 pointerdown 即时判断，state 驱动按钮高亮
-  // 与 AI 框那几段标签的写法。
-  const [selectMode, setSelectMode] = useState<DesignSelectMode>('single')
-  const selectModeRef = useRef<DesignSelectMode>('single')
-  selectModeRef.current = selectMode
+  // 点选口径：只有一种——多选语义（点一下加一个、shift 铺一段、空手拖框选一批）。
+  // 以前 dock 上那对单选/多选开关已拆（v2.04）：ref 留着是给 selectLayer 与 AI 框
+  // 的分段逻辑看的，它们只需要一个常量。
+  const selectModeRef = useRef<DesignSelectMode>('multi')
+  // 手里正握的笔（v1.99 工具 dock）：ref 供指针手势即时判断（拖画/钢笔不打一次 React
+  // 渲染），state 只驱动按钮高亮与光标。engine.setTool 与这份 state 永远同进同出——
+  // 见 selectTool，别单边改。
+  const [tool, setToolState] = useState<DesignTool>('move')
+  const toolRef = useRef<DesignTool>('move')
+  toolRef.current = tool
+  // 拖画落形的手势（shape 笔按下即起）：起点世界坐标 + 手里那支笔 + 活节点 id。
+  // 几何每帧直写节点（活节点预览），不付 React 渲染。
+  const createRef = useRef<{ pointerId: number; sx: number; sy: number; wx: number; wy: number; tool: DesignTool; id: string | null } | null>(null)
+  const marqueeRef = useRef<DesignShapeRect | null>(null)
+  // 框选手势（移动笔在空手上按下即起）：橡皮筋与落形共用 marqueeRef 一条预览通路，
+  // 收手时按矩形挑命中交 select。
+  const selectRef = useRef<{ pointerId: number; sx: number; sy: number; wx: number; wy: number } | null>(null)
   // 连续多选的锚点：最后一次**单击**落定的图层。shift 那一路只拿它算区间、不动它，所以连着
   // shift 点几回是在同一个起点的两头伸缩，而不是一段接一段地滚。
   const selectAnchorRef = useRef<string | null>(null)
@@ -995,7 +1311,7 @@ export function DesignViewer({ view }: ViewerProps) {
     if (viewportRef.current === null || !interactedRef.current) {
       viewportRef.current = engine.fit(width, height)
     }
-    engine.render(viewportRef.current, width, height, dpr)
+    engine.render(viewportRef.current, width, height, dpr, { marquee: marqueeRef.current })
     // 画面真的出来了：这时才撤 loading 盖板（见 `painted`）。
     if (!paintedRef.current) {
       paintedRef.current = true
@@ -1227,6 +1543,18 @@ export function DesignViewer({ view }: ViewerProps) {
     [draw, refreshSelection],
   )
 
+  /** 换笔：state（按钮高亮/光标）与 engine.setTool（离开钢笔撤账本）同进同出。 */
+  const selectTool = useCallback(
+    (next: DesignTool): void => {
+      setToolState(next)
+      engineRef.current?.setTool(next)
+      // 钢笔收笔后引擎内部会把笔换回移动（penDown/penFinish 里已切）：这里对齐 UI。
+      if (next === 'move') marqueeRef.current = null
+      draw()
+    },
+    [draw],
+  )
+
   /**
    * 起手一次缩放/旋转：把**后续每一帧都要用的量**在指针按下的这一刻全算好。
    *
@@ -1368,9 +1696,10 @@ export function DesignViewer({ view }: ViewerProps) {
     return () => observer.disconnect()
   }, [state, draw])
 
-  // 指针三态：预览模式按住即平移；编辑模式鼠标默认是「选元素」——按住空格才
-  // 变抓手平移（Figma 语义），打空且没按空格 = 取消选中，不拖动画布。两种
-  // 手势共用 pointer capture，光标离面板也不丢。
+  // 指针三态：预览模式按住即平移；编辑模式按手里的笔分支——移动笔选元素（按住空格
+  // 才变抓手平移，Figma 语义），落形笔拖画（橡皮筋、松手落图），钢笔点一下加一针，
+  // 文本点一下落字。打空且没按空格 = 取消选中，不拖动画布。手势共用 pointer
+  // capture，光标离面板也不丢。
   const onPointerDown = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (event.button !== 0 || engineRef.current === null) return
@@ -1385,8 +1714,39 @@ export function DesignViewer({ view }: ViewerProps) {
       // 编辑模式 + 空格按住 → 跳过选择逻辑，直接进入平移。
       const panning = modeRef.current === 'preview' || spaceRef.current
       if (!panning && modeRef.current === 'edit' && viewport !== null) {
-        // 改稿在跑：画布只看着——不点选、不拖移（平移仍归空格那一路，平移不是编辑）。
+        // 改稿在跑：画布只看着——不点选、不落形（平移仍归空格那一路，平移不是编辑）。
         if (holdRef.current !== null) return
+        // 屏幕 → 世界（与 pick 同一条换算）。
+        const wx = (sx - viewport.x) / viewport.scale
+        const wy = (sy - viewport.y) / viewport.scale
+        const active = toolRef.current
+        // 钢笔：点一下加一针；指针悬在首点上时引擎已立起 pendingClose——这一针是闭合，
+        // 落成矢量节点后引擎把笔换回移动，UI 在这里对齐。
+        if (active === 'pen') {
+          const outcome = engine.penDown(wx, wy)
+          if (outcome === 'done') setToolState('move')
+          event.currentTarget.setPointerCapture(event.pointerId)
+          draw()
+          return
+        }
+        // 文本：点一下落一个占位文本节点并选中（内容在属性面板改），交还移动笔。
+        if (active === 'text') {
+          const id = engine.createTextAt(wx, wy)
+          engine.select([id], false)
+          selectAnchorRef.current = id
+          setToolState('move')
+          draw()
+          refreshSelection()
+          return
+        }
+        // 落形笔：起手**就落真节点**（活节点预览——拖画中画的就是三角形/矩形本体，
+        // 不再是橡皮筋矩形），拖动中每帧把几何写到这个节点上。
+        if (active !== 'move') {
+          const id = engine.beginShape(active, { x: wx, y: wy })
+          event.currentTarget.setPointerCapture(event.pointerId)
+          createRef.current = { pointerId: event.pointerId, sx, sy, wx, wy, tool: active, id }
+          return
+        }
         const hit = engine.pick(sx, sy, viewport)
         if (hit !== null) {
           // 点谁、加不加、shift 是不是铺一段——全归 selectLayer 一个口径（与图层面板同一份）。
@@ -1399,14 +1759,11 @@ export function DesignViewer({ view }: ViewerProps) {
           refreshSelection()
           return
         }
-        // 打空：清掉选区，锚点一并清——不然下一次 shift 会从一段已经不亮的旧选区上铺开。
-        if (!event.shiftKey) {
-          selectAnchorRef.current = null
-          engine.select([], false)
-          draw()
-          refreshSelection()
-        }
-        // 编辑模式打空：只取消选中，不拖画布。
+        // 打空：起框选。收手时按橡皮筋挑命中——原地松手（框没拉开）才轮到清选区
+        // （shift 框选/点空都保留选区，锚点一并清——不然下一次 shift 会从一段已经
+        // 不亮的旧选区上铺开）。
+        event.currentTarget.setPointerCapture(event.pointerId)
+        selectRef.current = { pointerId: event.pointerId, sx, sy, wx, wy }
         return
       }
       event.currentTarget.setPointerCapture(event.pointerId)
@@ -1439,23 +1796,79 @@ export function DesignViewer({ view }: ViewerProps) {
         draw()
         return
       }
+      // 拖画中：几何每帧直写活节点（世界坐标、左上角原点 + 正宽高），不付 React 渲染。
+      const creating = createRef.current
+      if (creating !== null && creating.pointerId === event.pointerId) {
+        const viewport = viewportRef.current
+        if (viewport === null || viewport.scale <= 0) return
+        const rect = wrap.getBoundingClientRect()
+        const wx = (event.clientX - rect.left - viewport.x) / viewport.scale
+        const wy = (event.clientY - rect.top - viewport.y) / viewport.scale
+        if (creating.id !== null) {
+          engineRef.current?.updateShapeRect(creating.id, {
+            x: Math.min(creating.wx, wx),
+            y: Math.min(creating.wy, wy),
+            width: Math.abs(wx - creating.wx),
+            height: Math.abs(wy - creating.wy),
+          })
+          draw()
+        }
+        return
+      }
+      // 框选中：橡皮筋每帧直写 marqueeRef（与落形共用一条预览通路），不付 React 渲染。
+      const selecting = selectRef.current
+      if (selecting !== null && selecting.pointerId === event.pointerId) {
+        const viewport = viewportRef.current
+        if (viewport === null || viewport.scale <= 0) return
+        const rect = wrap.getBoundingClientRect()
+        const wx = (event.clientX - rect.left - viewport.x) / viewport.scale
+        const wy = (event.clientY - rect.top - viewport.y) / viewport.scale
+        marqueeRef.current = {
+          x: Math.min(selecting.wx, wx),
+          y: Math.min(selecting.wy, wy),
+          width: Math.abs(wx - selecting.wx),
+          height: Math.abs(wy - selecting.wy),
+        }
+        draw()
+        return
+      }
       const drag = dragRef.current
       const viewport = viewportRef.current
       // 编辑模式悬停高亮（无按键按下时）：跟随指针 pick 最深可选中节点
       // （hitTestDeep，含子图层），hover 变化引擎内部自查、只重画一次。
       // 改稿在跑时这份高亮也停：画布既然不接编辑，「将被选中」就成了空头支票。
+      // 高亮只在移动笔下有意义——落形笔的指针是在圈地，不是在选人。
       if (
         modeRef.current === 'edit' &&
+        toolRef.current === 'move' &&
         holdRef.current === null &&
         gestureRef.current === null &&
         moveRef.current === null &&
         dragRef.current === null &&
+        createRef.current === null &&
+        selectRef.current === null &&
         !spaceRef.current
       ) {
         const engine = engineRef.current
         if (engine !== null && viewport !== null) {
           const rect = wrap.getBoundingClientRect()
           engine.hover(engine.pick(event.clientX - rect.left, event.clientY - rect.top, viewport))
+        }
+      }
+      // 钢笔悬停：喂橡皮线端点；指针离首点 8px（屏幕）内提示可闭合——近了立
+      // pendingClose，远了收回去。penState 不在场（还没落第一针）时无事可喂。
+      if (modeRef.current === 'edit' && toolRef.current === 'pen' && viewport !== null && viewport.scale > 0) {
+        const engine = engineRef.current
+        if (engine !== null) {
+          const rect = wrap.getBoundingClientRect()
+          const sx = event.clientX - rect.left
+          const sy = event.clientY - rect.top
+          const wx = (sx - viewport.x) / viewport.scale
+          const wy = (sy - viewport.y) / viewport.scale
+          const first = engine.penFirstVertex()
+          const closing = first !== null && Math.hypot(sx - (first.x * viewport.scale + viewport.x), sy - (first.y * viewport.scale + viewport.y)) < 8
+          engine.penHover(wx, wy, closing)
+          draw()
         }
       }
       if (drag === null || viewport === null || drag.pointerId !== event.pointerId) return
@@ -1489,11 +1902,71 @@ export function DesignViewer({ view }: ViewerProps) {
         draw()
         return
       }
+      // 拖画收手：真拖了按橡皮筋落形；只是点了一下落一枚默认尺寸（Figma 的规矩）。
+      // 落完交还移动笔——一支笔办完一件事就放下，继续画再按键取笔；与文本/钢笔
+      // 同一套收场，手里不会留着「下一步画什么都是图形」的惯性。
+      const creating = createRef.current
+      if (creating !== null && creating.pointerId === event.pointerId) {
+        createRef.current = null
+        const engine = engineRef.current
+        const viewport = viewportRef.current
+        const wrap = wrapRef.current
+        if (engine !== null && viewport !== null && wrap !== null) {
+          const rect = wrap.getBoundingClientRect()
+          const dragged = Math.hypot(event.clientX - rect.left - creating.sx, event.clientY - rect.top - creating.sy) >= 4
+          // 默认尺寸（点一下不拖）：四形 100×100 以点为中心；直线横 120；容器/区域
+          // 各给一块能看见的底盘。
+          const defaults: Record<string, DesignShapeRect> = {
+            frame: { x: creating.wx, y: creating.wy, width: 200, height: 150 },
+            section: { x: creating.wx, y: creating.wy, width: 400, height: 300 },
+            rectangle: { x: creating.wx - 50, y: creating.wy - 50, width: 100, height: 100 },
+            ellipse: { x: creating.wx - 50, y: creating.wy - 50, width: 100, height: 100 },
+            polygon: { x: creating.wx - 50, y: creating.wy - 50, width: 100, height: 100 },
+            star: { x: creating.wx - 50, y: creating.wy - 50, width: 100, height: 100 },
+            line: { x: creating.wx - 60, y: creating.wy, width: 120, height: 0 },
+          }
+          if (creating.id !== null) {
+            if (!dragged) {
+              const shape = defaults[creating.tool]
+              if (shape !== undefined) engine.updateShapeRect(creating.id, shape)
+            }
+            const id = engine.endShape()
+            if (id !== null) selectAnchorRef.current = id
+          }
+          setToolState('move')
+          draw()
+          refreshSelection()
+        }
+        return
+      }
+      // 框选收手：橡皮筋拉开过就按矩形挑命中（shift 框加选）；原地松手（框没拉开）
+      // 才轮到清选区——点空的旧语义收在这一条里。
+      const selecting = selectRef.current
+      if (selecting !== null && selecting.pointerId === event.pointerId) {
+        selectRef.current = null
+        const engine = engineRef.current
+        if (engine !== null) {
+          const marquee = marqueeRef.current
+          marqueeRef.current = null
+          if (marquee !== null && (marquee.width > 0 || marquee.height > 0)) {
+            const hits = engine.pickRect(marquee)
+            if (event.shiftKey) engine.select(hits, true)
+            else engine.select(hits, false)
+            selectAnchorRef.current = null
+          } else if (!event.shiftKey) {
+            selectAnchorRef.current = null
+            engine.select([], false)
+          }
+        }
+        draw()
+        refreshSelection()
+        return
+      }
       if (dragRef.current?.pointerId !== event.pointerId) return
       dragRef.current = null
       event.currentTarget.classList.remove('is-panning')
     },
-    [draw],
+    [draw, refreshSelection],
   )
 
   // Wheel zooms around the cursor. Native listener, `passive: false` — React's
@@ -1596,10 +2069,43 @@ export function DesignViewer({ view }: ViewerProps) {
         return
       }
       if (editing && key === 'escape') {
+        // 钢笔在场先弃笔：Esc 的第一语义是「这笔不要了」，清选区退居其次。
+        if (toolRef.current === 'pen') {
+          engineRef.current?.penAbort()
+          setToolState('move')
+          draw()
+          refreshSelection()
+          return
+        }
+        // 握着落形笔时 Esc 先回移动笔（笔是用户自己换的，Esc 只是把笔放下）；
+        // 再按一次才轮到清选区。
+        if (toolRef.current !== 'move') {
+          selectTool('move')
+          return
+        }
         engineRef.current?.select([], false)
         draw()
         refreshSelection()
         return
+      }
+      // 工具快捷键（Figma 同一套字母）：V 移动 / F 容器 / R 矩形 / O 椭圆 / L 直线 /
+      // P 钢笔 / T 文本。回车在钢笔下是收笔。
+      if (editing && key === 'enter' && toolRef.current === 'pen') {
+        event.preventDefault()
+        engineRef.current?.penFinish()
+        setToolState('move')
+        draw()
+        refreshSelection()
+        return
+      }
+      if (editing && !event.shiftKey) {
+        const toolKeys: Record<string, DesignTool> = { v: 'move', f: 'frame', r: 'rectangle', o: 'ellipse', l: 'line', p: 'pen', t: 'text' }
+        const next = toolKeys[key]
+        if (next !== undefined) {
+          event.preventDefault()
+          selectTool(next)
+          return
+        }
       }
       if (!'wasd'.includes(key) || key === '') return
       event.preventDefault()
@@ -1632,7 +2138,7 @@ export function DesignViewer({ view }: ViewerProps) {
       wrap.removeEventListener('blur', onBlur)
       if (raf !== 0) cancelAnimationFrame(raf)
     }
-  }, [state, painted, draw, zoomAt, viewCenter, refreshSelection, stepHistory])
+  }, [state, painted, draw, zoomAt, viewCenter, refreshSelection, stepHistory, selectTool])
 
   /**
    * 改稿落地就收圈。
@@ -1759,7 +2265,12 @@ export function DesignViewer({ view }: ViewerProps) {
       ) : null}
       <div
         ref={wrapRef}
-        className={`dsh-canvas-design${mode === 'edit' ? ' is-editing' : ''}${mode === 'edit' && spaceHeld ? ' is-space' : ''}`}
+        className={[
+          'dsh-canvas-design',
+          mode === 'edit' ? ' is-editing' : '',
+          mode === 'edit' && spaceHeld ? ' is-space' : '',
+          mode === 'edit' && tool !== 'move' ? ' is-drawing' : '',
+        ].join('')}
         tabIndex={0}
         onPointerDown={(event) => {
           // 键盘快捷键（WASD/QE）跟聚焦走：点一下画布就把焦点拿到手。
@@ -1925,14 +2436,14 @@ export function DesignViewer({ view }: ViewerProps) {
           locked={hold !== null}
           onHold={beginHold}
           onSelectLayer={selectLayer}
-          selectMode={selectMode}
+          selectMode="multi"
           dock={<DesignDock
             history={history}
             canStep={canStep}
             locked={hold !== null}
-            selectMode={selectMode}
+            tool={tool}
+            onTool={selectTool}
             onStep={stepHistory}
-            onSelectMode={setSelectMode}
             onInsertFiles={insertImageFiles}
             onGenerate={generateImageLayer}
             listReferenceImages={listReferenceImages}

@@ -643,12 +643,12 @@ body[data-ds-dark-theme] .dsh-canvas-root{
    只有这枚胶囊吃。 */
 .dsh-canvas-design-dock-layer{position:absolute;top:12px;display:flex;justify-content:center;
   pointer-events:none;z-index:2}
-.dsh-canvas-design-dock{display:inline-flex;align-items:center;gap:2px;padding:3px;border-radius:999px;
+.dsh-canvas-design-dock{display:inline-flex;align-items:center;gap:1px;padding:2px;border-radius:999px;
   border:1px solid var(--dsh-hairline);background:var(--dsh-card);box-shadow:0 2px 10px rgba(0,0,0,.16);
   user-select:none;cursor:default;pointer-events:auto}
 .dsh-canvas-design-dock button{display:inline-flex;align-items:center;justify-content:center;
   border:none;background:transparent;color:var(--dsh-fg-2);cursor:pointer;
-  font:12px/16px var(--dsh-font);padding:3px 9px;border-radius:999px}
+  font:12px/16px var(--dsh-font);padding:3px 6px;border-radius:999px}
 .dsh-canvas-design-dock button:hover{background:var(--dsh-soft);color:var(--dsh-fg)}
 /* 撤销/重做没得走时是灰的：按钮**在**（位置不跳、含义一眼认得），只是按不动。它俩办完事
    就走，所以没有持续高亮——只有按不动这一种状态。 */
@@ -657,7 +657,31 @@ body[data-ds-dark-theme] .dsh-canvas-root{
 /* 单选/多选是「现在在哪一面」：永远有一枚亮着，与模式开关同一副画法。 */
 .dsh-canvas-design-dock-modes{display:inline-flex;align-items:center;gap:2px}
 .dsh-canvas-design-dock-modes button[aria-checked=true]{background:var(--dsh-mid);color:var(--dsh-fg)}
-.dsh-canvas-design-dock-sep{width:1px;height:16px;margin:0 3px;background:var(--dsh-hairline)}
+.dsh-canvas-design-dock-sep{width:1px;height:14px;margin:0 2px;background:var(--dsh-hairline)}
+/* 绘图工具（v1.99）：split 按钮（主脸 + 下拉小箭头）与单枚笔。is-active 是「手里正握着
+   这一支」——用 dock 上已有的高亮 token（--dsh-mid），跟单选/多选同副长相。 */
+.dsh-canvas-design-tool{position:relative;display:inline-flex;align-items:center;gap:0;
+  border-radius:999px}
+.dsh-canvas-design-tool-main,.dsh-canvas-design-tool-solo{display:inline-flex;align-items:center;
+  justify-content:center;gap:2px;padding:3px 4px;border-radius:999px}
+.dsh-canvas-design-tool-caret{padding:3px 2px;border-radius:999px}
+.dsh-canvas-design-tool.is-active,.dsh-canvas-design-tool-solo.is-active{background:var(--dsh-mid);color:var(--dsh-fg)}
+.dsh-canvas-design-tool.is-active button:hover,.dsh-canvas-design-tool-solo.is-active:hover{background:transparent;color:var(--dsh-fg)}
+/* 下拉菜单：贴着各自的组（组就是 relative 锚点），竖着一列，宽点好认字。 */
+.dsh-canvas-design-flyout{position:absolute;top:calc(100% + 4px);left:0;display:flex;flex-direction:column;
+  gap:0;min-width:128px;padding:3px;border-radius:10px;z-index:3;
+  border:1px solid var(--dsh-hairline);background:var(--dsh-card);box-shadow:0 2px 10px rgba(0,0,0,.16)}
+.dsh-canvas-design-flyout-item{display:flex;align-items:center;gap:6px;white-space:nowrap;
+  padding:3px 8px;border-radius:6px;text-align:left;font:12px/18px var(--dsh-font)}
+.dsh-canvas-design-flyout-item:hover{background:var(--dsh-soft);color:var(--dsh-fg)}
+.dsh-canvas-design-flyout-item.is-active{background:var(--dsh-mid);color:var(--dsh-fg)}
+.dsh-canvas-design-flyout-item.is-active:hover{background:var(--dsh-mid)}
+.dsh-canvas-design-flyout-check{flex:none;width:13px;font-size:11px;line-height:18px;color:var(--dsh-fg);text-align:left}
+.dsh-canvas-design-flyout-face{display:inline-flex;color:var(--dsh-fg-2)}
+.dsh-canvas-design-flyout-item.is-active .dsh-canvas-design-flyout-face{color:var(--dsh-fg)}
+/* 落形/钢笔/文本笔握在手里时，画布光标换十字准星——指针是在圈地，不是在选人。 */
+.dsh-canvas-design.is-editing.is-drawing{cursor:crosshair}
+.dsh-canvas-design.is-editing.is-drawing.is-space{cursor:grab}
 /* 图片图层（v1.96）：dock 胶囊下面挂的小面板（生成的提示词 / 引用的图片清单）与结果
    一句话。wrap 只负责竖着摞、横向居中——外层 dock-layer 已经把水平摆位管了。 */
 .dsh-canvas-design-dock-wrap{display:flex;flex-direction:column;align-items:center;gap:4px}

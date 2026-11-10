@@ -18,7 +18,7 @@
  */
 import { createEditor } from '@open-pencil/core/editor'
 import { CONTAINER_TYPES } from '@open-pencil/scene-graph/node-defaults'
-import type { SceneGraph, SceneNode } from '@open-pencil/scene-graph'
+import type { SceneGraph, SceneNode, Fill as SceneFill } from '@open-pencil/scene-graph'
 import { colorFromCss, colorToCss, decodeDesignFile, encodeDesignFile, DesignDocumentError } from '../../../../core/artifact/design/document.ts'
 import { clampPointCount, clampRatio } from '../../../../core/artifact/design/node-props.ts'
 import { duplicatePageIn, newPageName } from '../../../../core/artifact/design/pages.ts'
@@ -36,7 +36,10 @@ import type {
   DesignNodeFrame,
   DesignNodeProps,
   DesignNodeRead,
+  DesignRenderPreview,
+  DesignShapeRect,
   DesignStrokeItem,
+  DesignTool,
   DesignViewport,
   EngineOutcome,
 } from './design-engine-types.ts'
@@ -162,6 +165,9 @@ async function buildEngine({ twoD, gl, runtime, envelope, onRepaint }: CreateDes
   // 悬停高亮：编辑模式指针下的「将被选中」节点。渲染器按帧画 overlay，
   // 不进场景 picture——变更只触发重画，不 bump sceneVersion。
   let hoverId: string | null = null
+  // 绘图工具（v1.99）：当前笔。UI 状态（按钮高亮、下拉）归 viewer，这里只记
+  // 「笔落下之后」要用的那一份；离开钢笔时把没画完的账本撤掉。
+  let activeTool: DesignTool = 'move'
 
   const readNode = (id: string): DesignNodeRead | null => {
     const node = graph.getNode(id)
@@ -203,6 +209,88 @@ async function buildEngine({ twoD, gl, runtime, envelope, onRepaint }: CreateDes
     }
   }
 
+  // ── 活节点落形（v2.06）：拖画中的预览**就是真节点** ──────────────────────────
+  // 按下即建真实节点、拖动中每帧更新几何、收手一条 undo 提交。比画轮廓线诚实——
+  // 两种渲染后端都原生画节点（Skia 的 picture cache 也按节点几何走），三角形在
+  // 拖画中就是三角形，连默认填充都在。活节点本身不带 undo：undo 条目在收手时
+  // 以**最终几何**拍快照（创建快照若在起手拍，undo 会退回一枚 1×1 小块）。
+  let liveShapeId: string | null = null
+
+  /** 起一笔：建真实节点（默认填充/点数照上游 createShape 的 overrides 那张表）。 */
+  const beginShapeNode = (tool: DesignTool, point: { x: number; y: number }): string | null => {
+    const type = SHAPE_NODE_TYPES[tool]
+    if (type === undefined) return null
+    // 拖画没拉开时也有一枚 1×1 兜底：收手前 viewer 会按默认尺寸再摆一次。
+    if (liveShapeId !== null) commitShapeNode()
+    const pageId = editor.state.currentPageId
+    const overrides: Record<string, unknown> = {
+      x: Math.round(point.x),
+      y: Math.round(point.y),
+      width: 1,
+      height: type === 'LINE' ? 0 : 1,
+      fills: [SHAPE_DEFAULT_FILLS[type]],
+    }
+    if (type === 'SECTION') {
+      overrides.strokes = [{ ...SHAPE_SECTION_STROKE }]
+      overrides.cornerRadius = 5
+    }
+    // 多边形/星形的点数**必须在创建时就带上**：undo 快照在 createNode 那一刻拍板。
+    if (type === 'POLYGON') overrides.pointCount = 3
+    if (type === 'STAR') {
+      overrides.pointCount = 5
+      overrides.starInnerRadius = 0.38
+    }
+    const node = graph.createNode(type, pageId, overrides)
+    editor.runLayoutForNode(pageId)
+    liveShapeId = node.id
+    return node.id
+  }
+
+  /** 拖动中的一帧：几何直写（不付 undo——账在收手时一笔结清）。 */
+  const resizeShapeNode = (id: string, rect: DesignShapeRect): void => {
+    const node = graph.getNode(id)
+    if (node === undefined) return
+    graph.updateNode(id, {
+      x: Math.round(rect.x),
+      y: Math.round(rect.y),
+      width: Math.max(1, Math.round(rect.width)),
+      // 直线的高允许为 0（水平线），其余的至少 1，别落出零尺寸节点。
+      height: Math.max(node.type === 'LINE' ? 0 : 1, Math.round(rect.height)),
+    })
+  }
+
+  /** 收一笔：以最终几何拍快照、压一条 undo、选中。 */
+  const commitShapeNode = (): string | null => {
+    if (liveShapeId === null) return null
+    const id = liveShapeId
+    liveShapeId = null
+    const node = graph.getNode(id)
+    if (node === undefined) return null
+    const pageId = editor.state.currentPageId
+    const previousSelection = [...editor.state.selectedIds]
+    const snapshot = structuredClone(node)
+    const before = historyEvents
+    editor.pushUndoEntry({
+      label: `${snapshot.type.toLowerCase()} 节点`,
+      forward: () => {
+        // 身份由 createNodeWithId 的第一个参数给，快照里剥掉 id 别带两份（与插图同一条规矩）。
+        const { id: dropId, parentId: snapParent, ...overrides } = structuredClone(snapshot)
+        void dropId
+        graph.createNodeWithId(snapshot.id, snapshot.type, snapParent, overrides)
+        editor.runLayoutForNode(pageId)
+        editor.select([snapshot.id], false)
+      },
+      inverse: () => {
+        graph.deleteNode(snapshot.id)
+        editor.runLayoutForNode(pageId)
+        editor.select(previousSelection, false)
+      },
+    })
+    recordHistory(before)
+    editor.select([id], false)
+    return id
+  }
+
   /** 工具面：两种渲染后端共用同一套编辑语义。 */
   const editing = {
     pick(sx: number, sy: number, viewport: DesignViewport): string | null {
@@ -216,6 +304,20 @@ async function buildEngine({ twoD, gl, runtime, envelope, onRepaint }: CreateDes
       if (hoverId === id) return
       hoverId = id
       onRepaint()
+    },
+    // 框选：只扫当前页的**顶层**（子层跟着容器走）；x/y 相对父级，页的子节点就是世界
+    // 坐标（页自身没有几何）。可见与未锁才可选中——藏起来的和锁上的不是框选的对象。
+    pickRect(rect: { x: number; y: number; width: number; height: number }): string[] {
+      const right = rect.x + rect.width
+      const bottom = rect.y + rect.height
+      const hits: string[] = []
+      for (const node of graph.getChildren(editor.state.currentPageId)) {
+        if (!node.visible || node.locked) continue
+        const intersects =
+          node.x < right && node.x + node.width > rect.x && node.y < bottom && node.y + node.height > rect.y
+        if (intersects) hits.push(node.id)
+      }
+      return hits
     },
     selection: (): string[] => [...editor.state.selectedIds],
     select(ids: readonly string[], additive: boolean): void {
@@ -485,6 +587,105 @@ async function buildEngine({ twoD, gl, runtime, envelope, onRepaint }: CreateDes
       editor.deleteSelected()
       recordHistory(before)
     },
+    // —— 绘图工具（v1.99）——
+    tool: (): DesignTool => activeTool,
+    setTool(tool: DesignTool): void {
+      if (activeTool === tool) return
+      // 离开钢笔时账本里可能还挂着没画完的顶点：撤掉，不留孤儿预览线。
+      if (activeTool === 'pen' && editor.state.penState !== null) editor.penCancel()
+      activeTool = tool
+    },
+    beginShape(tool: DesignTool, point: { x: number; y: number }): string | null {
+      return beginShapeNode(tool, point)
+    },
+    updateShapeRect(id: string, rect: DesignShapeRect): void {
+      resizeShapeNode(id, rect)
+    },
+    endShape(): string | null {
+      return commitShapeNode()
+    },
+    createShape(tool: DesignTool, rect: DesignShapeRect): string | null {
+      // 整段落形走活节点同一条路：按下即有节点（预览就是它）、收手一条 undo 提交——
+      // 一次性调用不过是把三步捏在一起。
+      const id = beginShapeNode(tool, { x: rect.x, y: rect.y })
+      if (id === null) return null
+      resizeShapeNode(id, rect)
+      return commitShapeNode()
+    },
+    createTextAt(x: number, y: number): string {
+      // 占位文本跟节点**同一个 undo 条目**落（内容写进创建快照）：一笔 undo 退干净。
+      // 建成两条（createShape + updateNodeWithUndo）会让 recordHistory 的一步对上
+      // 两条目，undo 计数对不上账（见 recordHistory——它只数「变没变」，不数条数）。
+      const pageId = editor.state.currentPageId
+      const previousSelection = [...editor.state.selectedIds]
+      const node = graph.createNode('TEXT', pageId, {
+        x: Math.round(x),
+        y: Math.round(y),
+        width: 160,
+        height: 48,
+        text: '文本',
+        name: '文本',
+        fills: [{ type: 'SOLID', visible: true, opacity: 1, color: colorFromCss('#000000') ?? { r: 0, g: 0, b: 0, a: 1 } }],
+      })
+      editor.runLayoutForNode(pageId)
+      const snapshot = structuredClone(node)
+      const before = historyEvents
+      editor.pushUndoEntry({
+        label: '文本节点',
+        forward: () => {
+          // 身份由 createNodeWithId 的第一个参数给，快照里剥掉 id 别带两份（与插图同一条规矩）。
+          const { id, parentId: snapParent, ...overrides } = structuredClone(snapshot)
+          void id
+          graph.createNodeWithId(snapshot.id, snapshot.type, snapParent, overrides)
+          editor.runLayoutForNode(pageId)
+          editor.select([snapshot.id], false)
+        },
+        inverse: () => {
+          graph.deleteNode(snapshot.id)
+          editor.runLayoutForNode(pageId)
+          editor.select(previousSelection, false)
+        },
+      })
+      recordHistory(before)
+      editor.select([node.id], false)
+      return node.id
+    },
+    penDown(x: number, y: number): 'vertex' | 'done' {
+      const pen = editor.state.penState
+      // 指针落在首点上（viewer 已把 pendingClose 立起来）：这一针是「闭合」——
+      // 收账落成矢量节点，交回 viewer 换回移动笔。
+      if (pen !== null && pen.vertices.length >= 2 && pen.pendingClose) {
+        editor.penCommit(true)
+        activeTool = 'move'
+        return 'done'
+      }
+      editor.penAddVertex(x, y)
+      return 'vertex'
+    },
+    penFirstVertex(): { x: number; y: number } | null {
+      const pen = editor.state.penState
+      if (pen === null || pen.vertices.length === 0) return null
+      return { x: pen.vertices[0].x, y: pen.vertices[0].y }
+    },
+    penHover(x: number, y: number, closing: boolean): void {
+      const pen = editor.state.penState
+      if (pen === null) return
+      // 橡皮线的指针端点：渲染器 overlay 从这两个字段读（上游画布手势也是这么喂的）。
+      editor.state.penCursorX = x
+      editor.state.penCursorY = y
+      if (pen.pendingClose !== closing) editor.penSetPendingClose(closing)
+    },
+    penFinish(): void {
+      const pen = editor.state.penState
+      if (pen === null) return
+      editor.penCommit(pen.pendingClose === true)
+      activeTool = 'move'
+    },
+    penAbort(): void {
+      if (editor.state.penState === null) return
+      editor.penCancel()
+      activeTool = 'move'
+    },
     undo(): void {
       if (undoSteps === 0) return
       const before = historyEvents
@@ -637,10 +838,32 @@ async function buildEngine({ twoD, gl, runtime, envelope, onRepaint }: CreateDes
     },
   }
 
+  /**
+   * 渲染预览的拼装：viewer 那份橡皮筋 + 引擎自持的钢笔账本。penState 长在
+   * editor.state 上（上游画布手势也这么用），指针端两个字段单独挂着——渲染器
+   * overlay 认的就是这一整份形状，Skia 路径原样递过去。
+   */
+  const renderPreview = (preview?: DesignRenderPreview): DesignRenderPreview | undefined => {
+    const pen = editor.state.penState
+    if (pen === null) return preview
+    return {
+      ...preview,
+      pen: {
+        vertices: pen.vertices,
+        segments: pen.segments,
+        dragTangent: pen.dragTangent,
+        closingToFirst: pen.closingToFirst,
+        pendingClose: pen.pendingClose,
+        ...(editor.state.penCursorX !== null ? { cursorX: editor.state.penCursorX } : {}),
+        ...(editor.state.penCursorY !== null ? { cursorY: editor.state.penCursorY } : {}),
+      },
+    }
+  }
+
   if (skia !== null) {
     const engine: DesignEngine = {
-      render: (viewport, width, height, dpr) =>
-        skia?.paint(viewport, width, height, dpr, editor.state.selectedIds, editor.state.sceneVersion, editor.state.currentPageId, hoverId),
+      render: (viewport, width, height, dpr, preview) =>
+        skia?.paint(viewport, width, height, dpr, editor.state.selectedIds, editor.state.sceneVersion, editor.state.currentPageId, hoverId, renderPreview(preview)),
       fit,
       dispose: () => {
         gl.style.visibility = 'hidden'
@@ -654,7 +877,7 @@ async function buildEngine({ twoD, gl, runtime, envelope, onRepaint }: CreateDes
   // The 2D path owns its canvas sizing (it re-contexts every frame) and draws
   // the world-aligned dot grid; the Skia path paints its own backdrop instead.
   const engine: DesignEngine = {
-    render(viewport, width, height, dpr) {
+    render(viewport, width, height, dpr, preview) {
       if (width === 0 || height === 0) return
       const deviceWidth = Math.round(width * dpr)
       const deviceHeight = Math.round(height * dpr)
@@ -668,12 +891,78 @@ async function buildEngine({ twoD, gl, runtime, envelope, onRepaint }: CreateDes
       paintDocument(graph, canvas2dBackend(context), viewport, editor.state.currentPageId)
       paint2DSelection(context, graph, editor.state.selectedIds, viewport)
       if (hoverId !== null) paint2DHover(context, graph, hoverId, viewport)
+      // 拖画橡皮筋（世界 → 屏幕）：虚线框 + 一层淡填充，跟 Skia overlay 同一副长相。
+      const marquee = preview?.marquee
+      if (marquee !== undefined && marquee !== null) {
+        context.save()
+        context.fillStyle = 'rgba(13, 148, 136, 0.10)'
+        context.strokeStyle = 'rgba(13, 148, 136, 0.9)'
+        context.setLineDash([4, 3])
+        context.lineWidth = 1
+        const rect = {
+          x: marquee.x * viewport.scale + viewport.x,
+          y: marquee.y * viewport.scale + viewport.y,
+          width: marquee.width * viewport.scale,
+          height: marquee.height * viewport.scale,
+        }
+        context.fillRect(rect.x, rect.y, rect.width, rect.height)
+        context.strokeRect(rect.x, rect.y, rect.width, rect.height)
+        context.restore()
+      }
+      paint2DPenPreview(context, editor.state.penState, editor.state.penCursorX, editor.state.penCursorY, viewport)
     },
     fit,
     dispose() {},
     ...editing,
   }
   return { kind: 'ready', engine }
+}
+
+/**
+ * 2D 回退路径的钢笔预览：顶点账本连成折线，指针端补一段橡皮线，首点画一枚
+ * 「可闭合」的圆。Skia 路径由渲染器 overlay 原生画（penState 喂进 overlays），
+ * 这里是同一副长相的 2D 手画版。
+ */
+function paint2DPenPreview(
+  context: CanvasRenderingContext2D,
+  pen: { vertices: { x: number; y: number }[]; segments: unknown[]; pendingClose?: boolean } | null,
+  cursorX: number | null,
+  cursorY: number | null,
+  viewport: DesignViewport,
+): void {
+  if (pen === null || pen.vertices.length === 0) return
+  const toScreen = (x: number, y: number): [number, number] => [x * viewport.scale + viewport.x, y * viewport.scale + viewport.y]
+  context.save()
+  context.lineWidth = 1.5
+  context.strokeStyle = 'rgba(13, 148, 136, 0.9)'
+  if (pen.vertices.length >= 2) {
+    context.beginPath()
+    const [x0, y0] = toScreen(pen.vertices[0].x, pen.vertices[0].y)
+    context.moveTo(x0, y0)
+    for (const vertex of pen.vertices.slice(1)) {
+      const [sx, sy] = toScreen(vertex.x, vertex.y)
+      context.lineTo(sx, sy)
+    }
+    context.stroke()
+  }
+  if (cursorX !== null && cursorY !== null) {
+    const last = pen.vertices[pen.vertices.length - 1]
+    const [lx, ly] = toScreen(last.x, last.y)
+    const [cx, cy] = toScreen(cursorX, cursorY)
+    context.setLineDash([3, 3])
+    context.beginPath()
+    context.moveTo(lx, ly)
+    context.lineTo(cx, cy)
+    context.stroke()
+    context.setLineDash([])
+  }
+  // 首点上的圆环：pendingClose 时加粗——「松手就闭合」的提示。
+  const [fx, fy] = toScreen(pen.vertices[0].x, pen.vertices[0].y)
+  context.beginPath()
+  context.arc(fx, fy, pen.pendingClose === true ? 6 : 4, 0, Math.PI * 2)
+  context.strokeStyle = pen.pendingClose === true ? 'rgba(13, 148, 136, 1)' : 'rgba(13, 148, 136, 0.6)'
+  context.stroke()
+  context.restore()
 }
 
 /** The first visible solid fill as a css string, or null (gradient/image/none). */
@@ -683,6 +972,37 @@ function firstSolidCss(node: SceneNode): string | null {
 }
 
 // ── 图片图层（v1.96） ───────────────────────────────────────────────────────
+
+/** 拖画笔 → 场景图节点类型：落形时按这张表查（move/pen/text 不在表里，不是拖画笔）。 */
+const SHAPE_NODE_TYPES: Partial<Record<DesignTool, 'FRAME' | 'SECTION' | 'RECTANGLE' | 'ELLIPSE' | 'LINE' | 'POLYGON' | 'STAR'>> = {
+  frame: 'FRAME',
+  section: 'SECTION',
+  rectangle: 'RECTANGLE',
+  ellipse: 'ELLIPSE',
+  line: 'LINE',
+  polygon: 'POLYGON',
+  star: 'STAR',
+}
+
+/** 活节点落形的默认外观：照抄上游 createShape 的 DEFAULT_FILLS（形状灰、框白、区域深灰描边、线黑）。 */
+const SHAPE_DEFAULT_FILLS: Record<'FRAME' | 'SECTION' | 'RECTANGLE' | 'ELLIPSE' | 'LINE' | 'POLYGON' | 'STAR', SceneFill> = {
+  FRAME: { type: 'SOLID', visible: true, opacity: 1, color: colorFromCss('#ffffff') ?? { r: 1, g: 1, b: 1, a: 1 } },
+  SECTION: { type: 'SOLID', visible: true, opacity: 1, color: colorFromCss('#5e5e5e') ?? { r: 0.37, g: 0.37, b: 0.37, a: 1 } },
+  RECTANGLE: { type: 'SOLID', visible: true, opacity: 1, color: colorFromCss('#d4d4d4') ?? { r: 0.83, g: 0.83, b: 0.83, a: 1 } },
+  ELLIPSE: { type: 'SOLID', visible: true, opacity: 1, color: colorFromCss('#d4d4d4') ?? { r: 0.83, g: 0.83, b: 0.83, a: 1 } },
+  POLYGON: { type: 'SOLID', visible: true, opacity: 1, color: colorFromCss('#d4d4d4') ?? { r: 0.83, g: 0.83, b: 0.83, a: 1 } },
+  STAR: { type: 'SOLID', visible: true, opacity: 1, color: colorFromCss('#d4d4d4') ?? { r: 0.83, g: 0.83, b: 0.83, a: 1 } },
+  LINE: { type: 'SOLID', visible: true, opacity: 1, color: colorFromCss('#000000') ?? { r: 0, g: 0, b: 0, a: 1 } },
+}
+
+/** 区域的默认描边（上游 SECTION_DEFAULT_STROKE 同一份值）。 */
+const SHAPE_SECTION_STROKE = {
+  color: { r: 0.55, g: 0.55, b: 0.55, a: 1 },
+  weight: 1,
+  opacity: 1,
+  visible: true,
+  align: 'INSIDE',
+}
 
 /** 落得成图片图层的位图类型——与上游 placeFiles 那张表同一份（svg 走矢量导入，另一条路）。 */
 const IMAGE_TYPES: ReadonlySet<string> = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif', 'image/avif'])
