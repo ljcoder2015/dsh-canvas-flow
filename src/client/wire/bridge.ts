@@ -294,8 +294,9 @@ export class CanvasBridge {
    * `file` is the artifact's project-relative path; the host mints the card's
    * id (six random letters) and returns the seat — the id is *not* the path.
    */
-  createCard(projectId: string, file: string, kind: string, position: Point): Promise<BoardCard> {
-    return unwrap(this.card.createCard(projectId, file, kind, position, this.signal))
+  createCard(projectId: string, file: string, kind: string, position: Point, spawnStem?: string): Promise<BoardCard> {
+    // 缺省归一成空串：线上参数必须齐全，空串 = 精确切绑（宿主侧的语义见 createCard）。
+    return unwrap(this.card.createCard(projectId, file, kind, position, spawnStem ?? '', this.signal))
   }
 
   /**

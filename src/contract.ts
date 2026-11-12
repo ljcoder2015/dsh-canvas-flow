@@ -528,6 +528,12 @@ const P = {
    */
   importName: json('name', 'name', 'dsh-canvas-flow#ImportName', z.string().trim().min(1).max(200)),
   /**
+   * 新建判撞的词干（v2.10）。客户端铸的「类型名+序号」只是建议，宿主照它对磁盘落定
+   * （已删卡留下的文件同样占名）。**空串是合法入参**，意思是「精确切绑，不判撞」——
+   * 资料库「上板」认领的就是确切那个文件；与 `mediaModel` 的空串是同一条规矩。
+   */
+  spawnStem: json('stem', 'stem', 'dsh-canvas-flow#CardStem', z.string().max(120)),
+  /**
    * 导入文件的字节，base64 编码。
    *
    * 上限按「搬运上限的编码长度」给：16MB × 4/3 ≈ 21.3MB，多留一点余量。协议层先拦一道，
@@ -657,7 +663,7 @@ export const DSH_CANVAS_INVOCATIONS: readonly InvocationDescriptor[] = [
   // ── card: artifacts ─────────────────────────────────────────────────────
   {
     id: 'dsh-canvas-flow#card/create_card', service: 'card', namespace: 'card', method: 'createCard',
-    invocation: { kind: 'direct' }, parameters: [P.projectId, P.file, P.kind, P.position], cancellation: signal, result: R.card,
+    invocation: { kind: 'direct' }, parameters: [P.projectId, P.file, P.kind, P.position, P.spawnStem], cancellation: signal, result: R.card,
   },
   {
     id: 'dsh-canvas-flow#card/scaffold_webapp', service: 'card', namespace: 'card', method: 'scaffoldWebapp',

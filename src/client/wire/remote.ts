@@ -74,8 +74,13 @@ export interface CanvasFace {
 
 /** The `card` namespace — artifact digests, session binding, writes, export. */
 export interface CardFace {
-  /** `file` is the artifact's project-relative path; the host mints the card id. */
-  createCard(projectId: string, file: string, kind: string, position: Point, signal?: AbortSignal): Promise<RemoteResult<BoardCard>>
+  /**
+   * `file` is the artifact's project-relative path; the host mints the card id.
+   *
+   * `spawnStem`（v2.10）：新建判撞的词干——给了它，宿主先对磁盘落定再切绑（已删卡
+   * 留下的文件同样占名）；空串/缺省表示精确切绑（资料库「上板」认领确切文件）。
+   */
+  createCard(projectId: string, file: string, kind: string, position: Point, spawnStem?: string, signal?: AbortSignal): Promise<RemoteResult<BoardCard>>
   scaffoldWebapp(projectId: string, name: string, position: Point, signal?: AbortSignal): Promise<RemoteResult<BoardCard>>
   scaffoldDesign(projectId: string, name: string, position: Point, signal?: AbortSignal): Promise<RemoteResult<BoardCard>>
   readDesign(projectId: string, cardId: string, signal?: AbortSignal): Promise<RemoteResult<DesignDocumentWire>>

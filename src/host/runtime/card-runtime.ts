@@ -83,7 +83,7 @@ import {
   serializeSkeleton2dModel,
   textureReferenceOf,
 } from '../../core/skeleton2d/model.ts'
-import { artifactFolderPathOf, artifactPathOf } from '../../core/canvas/project/artifact-folders.ts'
+import { artifactFolderPathOf, artifactPathOf, settleArtifactPath } from '../../core/canvas/project/artifact-folders.ts'
 import { materialUpstreams } from '../../core/canvas/board/source-store.ts'
 import type { BoardFile } from './board-file.ts'
 import { nameFileReferences, nameWithoutProbe, type FileReferenceTarget } from '../../core/artifact/prompt/file-reference.ts'
@@ -265,6 +265,12 @@ export class CardRuntime extends TypertRemoteService {
    * The caller names the *file* the card binds (`file`, relative to the
    * project root); the card's id is minted here as six random letters, so a
    * file may be renamed without ever changing the seat's identity.
+   *
+   * @param spawnStem - 新建判撞的词干（v2.10）。客户端铸的「类型名+序号」只对板上的卡
+   *   负责，而一张已经拿掉的旧卡留下的文件同样占着那个名字（F1.2：落座从不删产物）——
+   *   不判磁盘，新建的卡就会绑到旧卡的产物上，看起来「变成了删掉的卡」。给了词干，
+   *   这里先对磁盘落定（`settleArtifactPath`，撞了从 `-2` 往下试）再切绑；**空串表示
+   *   精确切绑**（资料库「上板」认领的就是确切那个文件，落定反而会把认领弄丢）。
    */
   @Remote
   async createCard(
@@ -272,13 +278,29 @@ export class CardRuntime extends TypertRemoteService {
     file: string,
     kind: string,
     position: Point,
+    spawnStem?: string,
     signal?: AbortSignal,
   ): Promise<BoardCard> {
     signal?.throwIfAborted()
     const project = this.requireProject(projectId)
     const cardId = mintCardId(this.cardsOf(projectId).map(([key]) => cardIdOfKey(projectId, key)))
     const key = cardKeyOf(projectId, cardId)
-    const facts = await this.deps.io.facts(project.root, file, signal)
+    // 新建判撞先于一切读侧：落定后的路径才交给形态判定与「生来没有产物」的记录。
+    let bound = file
+    if (spawnStem !== undefined && spawnStem !== '') {
+      const base = basenameOf(file)
+      // 词干是客户端照它自己算出的路径带来的；扩展名从 file 上剥词干前缀拿——
+      // `动画卡1` + `动画卡1.skeleton2d.json` → `.skeleton2d.json`（双扩展名原样保住）。
+      // 前缀对不上说明调用方给的词干与路径不是同一句话，那就只信路径、退回单扩展名。
+      const extension = base.startsWith(spawnStem) ? base.slice(spawnStem.length) : extensionOf(base)
+      bound = await settleArtifactPath({
+        kind,
+        stem: spawnStem,
+        extension,
+        taken: async (candidate) => (await this.deps.io.presenceOf(project.root, candidate, signal)) === 'present',
+      })
+    }
+    const facts = await this.deps.io.facts(project.root, bound, signal)
     const resolved = facts.present ? facts.kind : kind
     await this.cards.put(key, {
       project: projectId,
@@ -286,7 +308,7 @@ export class CardRuntime extends TypertRemoteService {
       position,
       sessionId: '',
       updatedAt: Date.now(),
-      file,
+      file: bound,
       // A seat is allowed to precede its artifact (F1.11): remember which
       // seats were born that way, so "missing" can later mean *gone* rather
       // than *not written yet*.
@@ -295,8 +317,8 @@ export class CardRuntime extends TypertRemoteService {
     await this.persist(projectId, project, signal)
     return {
       id: cardId,
-      file,
-      name: cardNameOf({ file, kind: resolved }),
+      file: bound,
+      name: cardNameOf({ file: bound, kind: resolved }),
       project: projectId,
       kind: resolved,
       kindLabel: kindLabel(resolved),
@@ -741,7 +763,8 @@ export class CardRuntime extends TypertRemoteService {
       folder = artifactFolderPathOf('app', `${base}-${n}`)
     }
     await this.deps.io.writeScaffold(project.root, folder, name, signal)
-    return this.createCard(projectId, `${folder}/index.html`, 'app', position, signal)
+    // 脚手架自己已经对磁盘落定过目录名（上面那个循环），这里精确切绑——词干交空。
+    return this.createCard(projectId, `${folder}/index.html`, 'app', position, undefined, signal)
   }
 
   /**
@@ -766,7 +789,8 @@ export class CardRuntime extends TypertRemoteService {
       filePath = artifactPathOf('design', `${base}-${n}`, 'design')
     }
     await this.deps.io.writeDesign(project.root, filePath, scaffoldDesignDocument(), undefined, signal)
-    return this.createCard(projectId, filePath, 'design', position, signal)
+    // 同脚手架：目录名上面已对磁盘落定，这里精确切绑。
+    return this.createCard(projectId, filePath, 'design', position, undefined, signal)
   }
 
   /**

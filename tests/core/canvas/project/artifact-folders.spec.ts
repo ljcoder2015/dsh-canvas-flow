@@ -20,6 +20,7 @@ import {
   foldedPathOf,
   isArtifactFolder,
   planFolds,
+  settleArtifactPath,
   topSegmentOf,
   type FoldCard,
   type FoldPlan,
@@ -265,5 +266,33 @@ describe('落盘：撞名退让、失败留着', () => {
     expect(outcome.applied).toEqual([])
     expect(outcome.failed).toEqual([])
     expect(harness.moves).toEqual([])
+  })
+})
+
+describe('新建判撞（v2.10）：磁盘说了算', () => {
+  const taker = (taken: readonly string[]) => async (file: string): Promise<boolean> => taken.includes(file)
+
+  it('词干空闲就原样落定——一个多余序号都不加', async () => {
+    await expect(
+      settleArtifactPath({ kind: 'skeleton2d', stem: '动画卡1', extension: 'skeleton2d.json', taken: taker([]) }),
+    ).resolves.toBe('skeleton2d/动画卡1.skeleton2d.json')
+  })
+
+  it('已删卡留下的文件同样占名：撞了从 -2 往下试，与改名、导入同一条规矩', async () => {
+    const taken = taker(['skeleton2d/动画卡1.skeleton2d.json', 'skeleton2d/动画卡1-2.skeleton2d.json'])
+    await expect(
+      settleArtifactPath({ kind: 'skeleton2d', stem: '动画卡1', extension: 'skeleton2d.json', taken }),
+    ).resolves.toBe('skeleton2d/动画卡1-3.skeleton2d.json')
+  })
+
+  it('双扩展名整段保住：-2 落在 `.skeleton2d` 之前，不是 `.json` 之前', async () => {
+    const settled = await settleArtifactPath({ kind: 'skeleton2d', stem: '动画卡1', extension: 'skeleton2d.json', taken: taker(['skeleton2d/动画卡1.skeleton2d.json']) })
+    expect(settled).toBe('skeleton2d/动画卡1-2.skeleton2d.json')
+  })
+
+  it('普通单扩展名同样成立，目录只从映射表取', async () => {
+    await expect(settleArtifactPath({ kind: 'image', stem: '图片1', extension: 'png', taken: taker(['images/图片1.png']) })).resolves.toBe(
+      'images/图片1-2.png',
+    )
   })
 })

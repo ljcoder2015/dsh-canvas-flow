@@ -21,6 +21,7 @@ import { CardRuntime } from './host/runtime/card-runtime.ts'
 import { BoardFile } from './host/runtime/board-file.ts'
 import { registerTools } from './host/tools.ts'
 import { registerAssetRoute } from './host/assets.ts'
+import { registerEditorAssetRoute } from './host/editor-assets.ts'
 import { registerFontRoute } from './host/fonts.ts'
 import { registerWorkspaceRoute } from './host/workspace-assets.ts'
 import { registerGlobalPrompt, PLUGIN_ID } from './host/prompt.ts'
@@ -179,6 +180,8 @@ export async function apply(ctx: Context, config?: Config): Promise<void> {
   // Runtime assets for the design previewer (CanvasKit WASM, fonts) — a no-op
   // on deployments without an HTTP surface.
   registerAssetRoute(ctx)
+  // Rigby2D 编辑器嵌入包（骨骼动画卡 v2.08 改道）：vendor 构建产物，多段路径只读分发。
+  registerEditorAssetRoute(ctx)
   // 这台机器上装的字体：面板列族名、预览器取字节（同样是「没有 HTTP 面就没有」）。
   // 索引要到第一次真有人问才建（扫描五百来个字体文件不该压在插件加载上）。
   registerFontRoute(ctx)

@@ -43,7 +43,7 @@ const CANVAS_MEMBERS: readonly TypertMemberModel[] = [
 
 /** The `card` namespace: artifact digests, writes, injection, export. */
 const CARD_MEMBERS: readonly TypertMemberModel[] = [
-  member('createCard', 'createCard(projectId, file, kind, position, signal?): Promise<BoardCard>', '为产物文件落一张新卡：file 是项目内相对路径，卡片 id 由画布铸出（6 位随机字母），返回值携带。'),
+  member('createCard', 'createCard(projectId, file, kind, position, spawnStem?, signal?): Promise<BoardCard>', '为产物文件落一张新卡：file 是项目内相对路径，卡片 id 由画布铸出（6 位随机字母），返回值携带。spawnStem 给出时宿主先对磁盘落定再切绑（新建判撞，已删卡留下的文件同样占名，撞了从 -2 往下试）；缺省/空串为精确切绑（认领确切那个文件，如资料库上板）。'),
   member('renameCard', 'renameCard(projectId, cardId, name, signal?): Promise<BoardCard>', '改卡片名（F1.12）：名字写进卡片，并连同磁盘上那一项一起改（文件形态改文件名、目录形态改目录名，入口页跟着搬）；撞名自动带 -2…-99 序号；产物就在画布根目录上、或名字里没有一个能当文件名的字则拒绝。'),
   member('setMediaModel', 'setMediaModel(projectId, cardId, model, signal?): Promise<BoardCard>', '记下这张卡由哪个模型生成（F2.7）：图片 / 视频 / 音频卡底栏那颗下拉框选的就是它，空串回到「自动」（按模型族在模型配置里挑）。不改会话——会话用哪个模型说话是另一件事。'),
   member('setMediaParams', 'setMediaParams(projectId, cardId, params, signal?): Promise<BoardCard>', '记下这张卡设下的生成参数（媒体编辑台）：图片卡的编辑模式（局部重绘 / 扩图 / 抠图）与蒙版、视频卡的首尾帧与相机。params 给空对象即清除全部参数；这些参数随后每一次生成都会被带上。不改会话、不碰产物。'),

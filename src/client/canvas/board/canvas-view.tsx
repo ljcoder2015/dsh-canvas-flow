@@ -194,7 +194,8 @@ const DOCK_SPECS: readonly DockSpec[] = [
  * 一个还不被占用的卡片名：**类型名 + 序号**（v1.54）——`文本1`、`图片2`。
  *
  * 名字就是卡片名，产物路径由它推出来（F1.13：`docs/文本1.md`），所以查重查的是
- * **板上的产物路径**；判据照旧只对已经坐下的卡负责，磁盘上真正的撞名由 host 落盘时再兜。
+ * **板上的产物路径**；这一步只挑一个大概率干净的名字——磁盘上真正的撞名（已删卡
+ * 留下的文件同样占名）由宿主切绑前落定（v2.10 的 `spawnStem` 那条路）。
  */
 function freeCardName(cards: readonly BoardCard[], kind: string, label: string, extension: string): string {
   const taken = new Set(cards.map((card) => card.file))
@@ -815,7 +816,10 @@ export function CanvasBoard(props: CanvasBoardProps) {
       // 产物按类型进子目录（F1.13）：`docs/文本1.md`、`images/图片1.png`。目录名只从
       // `core/canvas/artifact-folders.ts` 取，客户端不拼字符串。
       const file = artifactPathOf(spec.kind, name, spec.extension)
-      const card = await bridge.createCard(projectId, file, spec.kind, position)
+      // 词干交下去（v2.10）：宿主先对磁盘落定再切绑——一张已经拿掉的旧卡留下的文件
+      // 同样占着那个名字，不判磁盘，新建的卡就会绑上旧产物，看起来「变成了删掉的卡」。
+      // 落定后的真实路径以宿主回报的 `card.file` 为准（可能与本地预判差一个序号）。
+      const card = await bridge.createCard(projectId, file, spec.kind, position, name)
       if (spec.seed !== undefined) await bridge.writeText(projectId, card.id, spec.seed(card.name))
       return card
     },

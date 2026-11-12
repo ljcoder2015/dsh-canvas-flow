@@ -543,7 +543,9 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
           return { type: 'design', id: card.id, name: card.name }
         }
         const kind = typeof args.kind === 'string' ? args.kind : 'file'
-        const card = await deps.card.createCard(projectId, String(args.content), kind, { x: x ?? 48, y: y ?? 170 }, exec.signal)
+        // 第 5 位是 spawnStem（v2.10）：agent 自己点名路径，语义是精确切绑（不判撞），
+        // 与「上板」同一条路；只修参数错位——signal 现在在第 6 位。
+        const card = await deps.card.createCard(projectId, String(args.content), kind, { x: x ?? 48, y: y ?? 170 }, undefined, exec.signal)
         return { type: 'card', id: card.id, name: card.name, file: card.file }
       },
     }),
@@ -739,12 +741,19 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
     defineTool({
       name: TOOL_NAMES.generateSkeleton2d,
       description:
-        '为某张 Skeleton2D 卡片生成一份骨架动画模型（贴图 + 分层 + 骨骼 + 参数化动作：呼吸/摇摆/倾头，循环播放）。' +
-        '生成后打开卡片：编辑器会按贴图剪影自动分层（腿/臂/躯干/头）并配一具十二骨的人体骨架，之后仍可手动修。' +
-        'prompt 描述要画一个什么形象；引用进来的图片会自动当贴图（不重新画图），也可以用 referenceCardId 点名另一张。' +
-        '要微调动作幅度或循环时长，直接用文件工具改那份 .skeleton2d.json 的 motions 与 loop 字段；要改分层与骨骼，用编辑器。',
+        '为某张 Skeleton2D 卡片生成一份游戏素材级的骨骼动画（贴图 + 自动分层 + 骨骼 + 参数化动作，无缝循环）。' +
+        '用游戏术语提需求：**角色类**报动作名——待机（idle，生成的出厂默认）、跑动（run）、攻击（attack）、受击 / 施法等；' +
+        '**特效类**——火焰 / 光效 / 烟雾 / 传送门等循环特效；**物件类**——漂浮 / 摆动。' +
+        'prompt 描述要画一个什么形象、做什么动作；引用进来的图片自动当贴图（不重新画图），也可以用 referenceCardId 点名另一张。' +
+        '生成落盘的是待机档的温和动作；跑动 / 攻击等更强的动作随后用文件工具改那份 .skeleton2d.json：' +
+        'motions 的节拍（loop、cycles）与振幅、boneTracks 里 leg.* / arm.* 的摆动曲线（骨骼名由自动分层给出）。' +
+        '要改分层形状与骨骼摆位，用编辑器。',
       parameters: {
-        prompt: { type: 'string', description: '形象描述（要画一个什么样的角色/物件）', required: true },
+        prompt: {
+          type: 'string',
+          description: '形象 + 素材类型与动作（游戏术语）：如「持剑女骑士，待机」「Q 版哥布林，跑动」「火焰喷泉，循环特效」「宝箱，轻轻浮动」',
+          required: true,
+        },
         cardId: { type: 'string', description: '目标 Skeleton2D 卡片 id', required: true },
         referenceCardId: {
           type: 'string',

@@ -85,6 +85,32 @@ export function artifactPathOf(kind: string, stem: string, extension: string): s
 }
 
 /**
+ * 落定一张**新建**卡片的产物路径（v2.10）：撞名问**磁盘**，不问板面。
+ *
+ * 客户端铸的「类型名 + 序号」（`动画卡1`）只对已经坐下的卡负责；一张已经拿掉的旧卡
+ * 留在磁盘上的文件同样占着那个名字（F1.2：落座从不删产物）。新建时把词干交下来，
+ * 这里从词干起往下试 `-2`、`-3`——与改名（`settleRename`）、导入（`importPlanOf`）
+ * 同一条撞名规矩。判据由调用方以 `taken` 注入，这份策略在容器外穷举验。
+ *
+ * @param input.stem - 客户端铸好的词干（`动画卡1`）。
+ * @param input.extension - **完整**扩展名（`skeleton2d.json`）。双扩展名从 file 上
+ *   用单扩展名的工具推不出来，所以由调用方原样带来。
+ * @param input.taken - 这个路径上有没有东西。只有宿主看得到磁盘。
+ */
+export async function settleArtifactPath(input: {
+  readonly kind: string
+  readonly stem: string
+  readonly extension: string
+  readonly taken: (file: string) => Promise<boolean>
+}): Promise<string> {
+  for (let sequence = 1; ; sequence += 1) {
+    const stem = sequence === 1 ? input.stem : `${input.stem}-${String(sequence)}`
+    const candidate = artifactPathOf(input.kind, stem, input.extension)
+    if (!(await input.taken(candidate))) return candidate
+  }
+}
+
+/**
  * 一个**目录形态**的产物落在哪个路径上：`应用1` → `apps/应用1`。
  *
  * 应用节点的产物是一个带入口页的文件夹，两个脚手架（应用 / 设计）都只需要这一段，
