@@ -131,13 +131,19 @@ function mediaPreset(kind: string, tool: string): string {
  * 工具写它」那条对它**不成立**，恰恰相反：微调动作的唯一正道就是编辑那份 JSON。但
  * 「从无到有」的那条路是生成工具（它包着生图），两条各说各的。
  *
- * 单独抽成函数与 {@link DESIGN_PRESET} 同一个理由：它是这类卡共有的常识，且要进判据
- * （`tests/host/prompt.spec.ts`）。
+ * v2.11 起改讲**游戏素材的话**：用户提需求说的是「待机 / 跑动 / 攻击 / 火焰特效」，不是
+ * 「呼吸系数 0.012」。预设负责把两套语言对上——游戏动词落在模型的哪个字段、什么档位，
+ * 说清楚到模型不用猜。单独抽成函数与 {@link DESIGN_PRESET} 同一个理由：它是这类卡共有
+ * 的常识，且要进判据（`tests/host/prompt.spec.ts`）。
  */
 const SKELETON2D_PRESET = [
-  'The artifact of this card is a **skeleton2d-lite model** (a `.skeleton2d.json` file) plus a texture image it references (relative path in `texture`). The model animates the texture with parametric motion — breathing (`motions.breath`), sway (`motions.sway`), tilt (`motions.tilt`), each `{ cycles, amplitude, phase }` where `cycles` is whole cycles per loop (keep it an integer: that is what makes exports loop seamlessly) — over `loop` seconds.',
-  `To produce the whole thing, use \`${TOOL_NAMES.generateSkeleton2d}\` with \`cardId\` set to **this card's id** (\`canvas_card_id\`): it paints the texture (or reuses an image referenced onto this card) and writes the model. To fine-tune the motion afterwards, edit the JSON with the ordinary file tools — the card re-reads it from disk.`,
-  'Never edit the texture image itself with text tools; to repaint it, generate a new image card and reference it, or rerun the generation tool.',
+  'The artifact of this card is a **skeleton2d-lite model** (a `.skeleton2d.json` file) plus a texture image it references (relative path in `texture`) — a **game-ready animation loop**: the texture is layered and skinned onto bones, everything loops seamlessly over `loop` seconds.',
+  `Speak in game-asset terms and put the asset type and the moves in the \`prompt\`: **characters** name their moves — 待机 idle (the generation default), 跑动 run, 攻击 attack, plus hit / cast / dash when asked; **effects** are loopers — fire, glow, smoke, portals; **props** float or sway. Every one of those is expressible in this model — nothing needs a different tool.`,
+  `To produce the whole thing, use \`${TOOL_NAMES.generateSkeleton2d}\` with \`cardId\` set to **this card's id** (\`canvas_card_id\`): it paints the texture (or reuses an image referenced onto this card) and writes the model with **idle-grade defaults** — gentle breath/sway/tilt. A stronger move (run, attack, a fast effect) is a follow-up: edit the JSON with the ordinary file tools — the card re-reads it from disk:`,
+  '- `loop` sets the tempo in seconds: idle 4–6, run 0.8–1.6, attack 0.5–1.0, fast effect 1–2.',
+  '- `motions.breath/sway/tilt` are the body-level curves. `cycles` is whole cycles per loop — keep it an **integer** (0–8), that is what makes exports loop seamlessly. `amplitude` caps at 0.2 (of texture height): idle stays ~0.01, run pushes 0.05–0.1, attack spikes to 0.15+. For a sharp strike give the motion `keys` (t in [0,1), v in [-1,1]) instead of sine — a burst near t=0 with recovery after; keyframes still wrap, so the loop never breaks.',
+  '- `boneTracks` swings the auto-rigged bones **by name** (`root/spine/chest/head`, `arm.l.1/arm.l.2/arm.r.1/arm.r.2`, `leg.l.1/leg.l.2/leg.r.1/leg.r.2`): run alternates `leg.l.1` / `leg.r.1` with `arm.r.1` / `arm.l.1` counter-phase and the body leaning via `spine`; attack is `arm.r.1` (+ `arm.r.2` follow-through) winding up then striking, with `chest` counter; effects skip bones entirely and live in `motions` amplitude. Each track\'s `rot` keys take v in [-1,1] mapped to ±0.4 rad; two keys per half-cycle, matching the idle defaults already in the file.',
+  'Never edit the texture image itself with text tools; to repaint it, generate a new image card and reference it, or rerun the generation tool. Reshaping layers or bones is the editor\'s job — text tools move curves, not cutouts.',
 ].join(' ')
 
 /** 每种媒体形态配哪个生成工具。

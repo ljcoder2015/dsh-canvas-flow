@@ -183,6 +183,31 @@ describe('Skeleton2D 卡的预设（F2.7 第四种产物）', () => {
     expect(text).toContain('integer')
   })
 
+  it('讲游戏素材的话（v2.11）：角色报动作名，特效是循环器，并交代动作落在哪些字段', () => {
+    const text = sectionTextOf('skeleton2d')
+    // 游戏动词必须原样出现——用户说「待机/跑动/攻击」，预设就得接得住这三个词。
+    expect(text).toContain('idle')
+    expect(text).toContain('run')
+    expect(text).toContain('attack')
+    expect(text).toContain('待机')
+    expect(text).toContain('跑动')
+    expect(text).toContain('攻击')
+    // 特效与物件两态也要点名，别让模型以为只有人物能做。
+    expect(text).toContain('fire')
+    expect(text).toContain('props')
+    // 动作 → 字段的映射要指名道姓：节奏在 loop、体态在 motions、肢体在 boneTracks。
+    expect(text).toContain('`loop`')
+    expect(text).toContain('`motions.breath/sway/tilt`')
+    expect(text).toContain('`boneTracks`')
+    // 骨骼名必须是自动分层真的给得出的名字——写一个编出来的名，模型改 JSON 就改了个寂寞。
+    expect(text).toContain('leg.l.1')
+    expect(text).toContain('arm.r.1')
+    // 生成落盘是待机档，更强的动作是事后改 JSON——这条要明说，别让模型以为工具直接出跑动。
+    expect(text).toContain('idle-grade defaults')
+    // 旋转轨道的取值域与换算写实话：v ∈ [-1,1] → ±0.4 rad。
+    expect(text).toContain('0.4 rad')
+  })
+
   it('不带媒体三态的生成工具名', () => {
     const text = sectionTextOf('skeleton2d')
     expect(text).not.toContain(TOOL_NAMES.generateImage)
