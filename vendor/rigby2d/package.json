@@ -1,0 +1,66 @@
+{
+  "name": "rigby2d",
+  "version": "0.5.1",
+  "description": "Rigby2D: open-source 2D skeletal animation for games, films and interactive experiences. Built-in MCP server for AI assistants.",
+  "license": "MIT OR Apache-2.0",
+  "private": true,
+  "type": "module",
+  "author": "jaisurya-dev-art (https://github.com/jaisurya-dev-art)",
+  "homepage": "https://github.com/jaisurya-dev-art/rigby2d#readme",
+  "bugs": "https://github.com/jaisurya-dev-art/rigby2d/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jaisurya-dev-art/rigby2d.git"
+  },
+  "bin": {
+    "rigby2d-mcp": "src/mcp/server.js"
+  },
+  "keywords": [
+    "animation",
+    "skeletal-animation",
+    "2d",
+    "rigging",
+    "gamedev",
+    "film",
+    "interactive",
+    "tauri",
+    "editor",
+    "mcp",
+    "ai"
+  ],
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "web:dev": "vite",
+    "web:build": "vite build",
+    "test": "node --test \"test/*.test.js\"",
+    "build:mcpb": "node mcpb/build.mjs",
+    "build:phaser": "node runtimes/phaser/build.mjs",
+    "build:pixi": "node runtimes/pixi/build.mjs",
+    "site:dev": "vite --config site/vite.config.js",
+    "site:build": "node runtimes/phaser/build.mjs && vite build --config site/vite.config.js && vite build --base=/editor/ --outDir _site/editor --emptyOutDir",
+    "build:cocos": "node runtimes/cocos/build.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2.12.3",
+    "@tauri-apps/plugin-dialog": "^2.8.2",
+    "@tauri-apps/plugin-fs": "^2.7.0",
+    "@tauri-apps/plugin-http": "^2.8.3",
+    "@tauri-apps/plugin-opener": "^2.7.2",
+    "@tauri-apps/plugin-process": "^2.4.0",
+    "@tauri-apps/plugin-updater": "^2.14.1",
+    "ag-psd": "^31.0.3"
+  },
+  "devDependencies": {
+    "@anthropic-ai/mcpb": "^2.1.2",
+    "@tauri-apps/cli": "^2.12.2",
+    "highlight.js": "^11.12.0",
+    "marked": "^18.1.1",
+    "pixi.js": "^8.22.0",
+    "vite": "^8.3.4"
+  }
+}

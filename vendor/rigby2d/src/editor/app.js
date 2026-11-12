@@ -1,0 +1,1200 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Editor state, history and document commands.
+
+import { Pose } from '../core/pose.js';
+import { invalidateConstraints } from '../core/constraints.js';
+import { loadCustom, loadPreset, onKeymapStorage, saveCustom, savePreset } from './keymap.js';
+import { Skeleton } from '../core/model.js';
+import { remEuclid } from '../core/state.js';
+import * as edit from './edit.js';
+import { Images } from './images.js';
+import * as io from './io.js';
+import * as platform from './platform.js';
+import { askChoice, askOption, showResult } from './resultui.js';
+import { addSound, sounds, stopAudio } from './audio.js';
+import { WORKSPACES, workspace as workspaceDef } from './workspaces.js';
+import * as onion from './onion.js';
+import { track } from './analytics.js';
+import { forgetProject, rememberProject } from './recent.js';
+import { DEMOS_REMOTE, demoById } from './demos.js';
+import { actorEntries, actors, imageKey, loadActors, poseActors } from './actors.js';
+import { applyParallax, setupCameraPosition } from '../core/scene.js';
+import { createPrefs } from './prefs.js';
+import { isBackup } from './recovery.js';
+import { t, tn } from './i18n.js';
+
+/** Default onion-skin tint colors (future = cool, past = warm), shared with the UI. */
+export const ONION_DEFAULTS = { futureColor: [0.55, 0.75, 1], pastColor: [1, 0.55, 0.55] };
+
+/**
+ * Default guide colors, shared with the UI. Real-time guides are drawn while a bone is transformed
+ * (rotate defaults to fluorescent green); static guides are the Photoshop-style ruler guides. Solid,
+ * bright colors so they read over the artwork. Each `[r, g, b]` is 0..1.
+ */
+export const GUIDES_DEFAULTS = {
+  rotate: [0.25, 1, 0.3],
+  translate: [0.3, 0.7, 1],
+  scale: [1, 0.8, 0.2],
+  shear: [1, 0.4, 0.85],
+  vertical: [0.2, 0.9, 0.95],
+  horizontal: [1, 0.6, 0.25],
+  diagonal: [0.51, 0.82, 0.63],
+  antidiagonal: [0.82, 0.59, 0.9],
+};
+
+/**
+ * Frame rate of the open project (its output settings). A live binding: modules importing it see
+ * the current project's value.
+ */
+export let FPS = 30;
+
+/** Setup: edits change the setup (rest) pose. Animate: edits create keyframes at the current time. */
+export const Mode = Object.freeze({ Setup: 'setup', Animate: 'animate' });
+
+export const TOOLS = [
+  { id: 'pose', label: tn('✋ Pose') },
+  { id: 'create', label: tn('🦴 Create') },
+  { id: 'rotate', label: tn('⟳ Rotate') },
+  { id: 'translate', label: tn('✥ Translate') },
+  { id: 'scale', label: tn('⤢ Scale') },
+  { id: 'shear', label: tn('⧄ Shear') },
+];
+
+
+/** Snaps a time to the frame grid. */
+export function snap(t) {
+  return Math.round(t * FPS) / FPS;
+}
+
+// Selection is null, { bone: index } or { slot: index }.
+export const selBone = (sel) => (sel && sel.bone !== undefined ? sel.bone : null);
+export const selSlot = (sel) => (sel && sel.slot !== undefined ? sel.slot : null);
+
+// Dopesheet tracks: { bone, channel }, { slot, channel }, { deform }, { ik }, { drawOrder } or { events }.
+
+const errorText = (e) => (e && e.message) || String(e);
+
+function loadSetting(key, fallback) {
+  try {
+    return globalThis.localStorage?.getItem(key) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+/** The kinds of attachment shapes the viewport can show over the art. */
+export const SHAPE_KINDS = ['clipping', 'boundingbox', 'path', 'point'];
+
+/** Which attachment shapes the viewport shows (all by default), as last chosen. */
+function loadShapes() {
+  const out = Object.fromEntries(SHAPE_KINDS.map((k) => [k, true]));
+  try {
+    const saved = JSON.parse(loadSetting('rigby.view.shapes', '{}'));
+    for (const k of SHAPE_KINDS) if (typeof saved?.[k] === 'boolean') out[k] = saved[k];
+  } catch {
+    // A damaged setting shows everything.
+  }
+  return out;
+}
+
+/** Remembers which attachment shapes the viewport shows. */
+export function saveShapes(shapes) {
+  saveSetting('rigby.view.shapes', JSON.stringify(shapes));
+}
+
+export function saveSetting(key, value) {
+  try {
+    globalThis.localStorage?.setItem(key, value);
+  } catch {
+    // Settings are a convenience; ignore storage errors.
+  }
+}
+
+export class App {
+  constructor() {
+    this.doc = new Skeleton();
+    this.path = null;
+    /** Where Ctrl+S writes without asking: { path, fs }, or null. */
+    this.saveTarget = null;
+    this.images = new Images();
+    /** Mirror windows only: fetch an image's pixels from the authority on demand (images are not in
+     *  the shared state snapshot). Null in the editor window, where every image is already loaded. */
+    this.onMissingImage = null;
+    this.sel = null;
+    /**
+     * Bone the cursor is over in the viewport, the tree or the timeline (index), or null. Shared so
+     * the same bone lights up in all three at once, wherever the pointer is. Transient and local to
+     * this window: it never touches the document or `version` (so the tree is not rebuilt) and is
+     * not sent to detached windows. The viewport and dopesheet read it directly each frame; the tree
+     * updates its row classes through `onHoverChange`. Set it through `setHover`.
+     */
+    this.hoverBone = null;
+    /** The tree registers a callback here on each rebuild so hover updates track the live DOM. */
+    this.onHoverChange = null;
+    /**
+     * Draw-order images to glow in the viewport while a draw-order row is dragged: `{ main, slots }`,
+     * where `slots` are the lit slot indices (the dragged row and its two new neighbours) and `main`
+     * is the dragged one (a stronger glow). Null when not dragging. Transient like `hoverBone` and
+     * shared the same way, so the glow shows in the editor's viewport even while the Tree is detached.
+     * The viewport reads it each frame; set it through `setImageGlow`.
+     */
+    this.imageGlow = null;
+    /** Mesh being edited: { slot, name, mode: 'vertices' | 'weights', bone, radius, strength, subtract, selected }. */
+    this.meshEdit = null;
+    /** Shape being edited (bounding box, clipping or path): { slot, name, selected }. */
+    this.shapeEdit = null;
+    /** Physics simulation state kept between frames while playing, and the time to simulate. */
+    this.physics = new Map();
+    this.physicsDelta = 0;
+    /** Events recently crossed during playback: [{ name, at }] (performance.now() times). */
+    this.firedEvents = [];
+    /** Bottom panel view: 'dopesheet' or 'graph'. */
+    this.timelineView = 'dopesheet';
+    /** Selected dopesheet keys (the key objects themselves). */
+    this.selectedKeys = new Set();
+    /** Additionally selected bones (the primary selection is `sel`). */
+    this.multi = new Set();
+    this.mode = Mode.Setup;
+    this.tool = 'rotate';
+    /** Keyboard shortcut preset id. */
+    this.keymap = loadPreset();
+    /** The user's own keymap (preset 'custom'), or null. */
+    this.customKeymap = loadCustom();
+    // Another window (a detached panel) changed the shortcuts: use them here too.
+    onKeymapStorage(() => {
+      this.customKeymap = loadCustom();
+      this.keymap = loadPreset();
+      this.changed();
+    });
+    /** Animate mode: key every edit immediately (on), or keep edits as unkeyed changes (off). */
+    this.autoKey = false;
+    /** Unkeyed changes in animate mode: bone index -> { channel -> partial local transform }. */
+    this.pending = new Map();
+    /** Axes for numeric transform values: 'local', 'parent' or 'world'. */
+    this.axis = 'parent';
+    /** Playback direction: 1 forward, -1 backward. */
+    this.playDirection = 1;
+    /** Screen offset of the world origin from the viewport center, and zoom. */
+    this.view = { panX: 0, panY: 200, zoom: 1 };
+    this.anim = null;
+    this.time = 0;
+    this.playing = false;
+    this.looping = true;
+    /** Boomerang (ping-pong) preview: with Loop on, playback runs to the end and back. */
+    this.boomerang = false;
+    this.selectedKeys.clear();
+    this.status = t('Welcome to Rigby2D. Open a demo (File ▸ Open demo), or import a PSD, an SVG or PNGs.');
+    this.showBones = true;
+    /** Shows the output frame (resolution and framing) in the viewport. */
+    this.showFrame = false;
+    /**
+     * Attachment shapes drawn over the art, by kind (View menu): clipping masks, bounding boxes,
+     * paths and points. The selected one shows either way, so it can still be edited.
+     */
+    this.showShapes = loadShapes();
+    /** Hides every overlay at once (View ▸ Hide overlays), to watch the animation as it renders. */
+    this.hideOverlays = false;
+    /**
+     * Keeps the timeline on screen in Setup mode (View menu). Off by default: keys are only made in
+     * Animate mode, so Setup gives the viewport that room.
+     */
+    this.timelineInSetup = loadSetting('rigby.view.timelineInSetup', '0') === '1';
+    /**
+     * Onion skinning: ghost poses of nearby frames drawn behind the current one. `future` / `past`
+     * are the default frame counts and the colors tint them. `perBone` (bone name -> partial
+     * override) limits the ghosts to those bones and their descendants; empty = the whole skeleton.
+     * It is keyed by name, not index: indices shift when bones are deleted or reparented and when
+     * undo rebuilds the document, names do not. Read and write it through onionOverride /
+     * setOnionOverride / onionOverrideCount. Disabled costs one `if` per frame.
+     */
+    this.onion = {
+      enabled: false,
+      showFuture: true,
+      showPast: true,
+      future: 3,
+      past: 3,
+      /** Frames between ghosts (1 = every frame; more spreads the ghosts out at high frame rates). */
+      step: 1,
+      loop: true,
+      pastColor: [...ONION_DEFAULTS.pastColor],
+      futureColor: [...ONION_DEFAULTS.futureColor],
+      /** bone name -> { future?, past?, showFuture?, showPast?, futureColor?, pastColor? }. */
+      perBone: new Map(),
+    };
+    /**
+     * Guides: visual aids drawn over the viewport. `realtime` guides trace a transform while a bone
+     * is being rotated/translated/scaled/sheared; `static` are the ruler guides the user drops from
+     * the rulers. Each type has its own enable flag and color. `lines` holds the placed static
+     * guides. Session state (not persisted), toggled from the "Guides" toolbar button. Drawing is
+     * added by later features; this is the shared model and its options popover.
+     */
+    this.guides = {
+      enabled: true,
+      realtime: {
+        rotate: { enabled: true, color: [...GUIDES_DEFAULTS.rotate] },
+        translate: { enabled: true, color: [...GUIDES_DEFAULTS.translate] },
+        scale: { enabled: true, color: [...GUIDES_DEFAULTS.scale] },
+        shear: { enabled: true, color: [...GUIDES_DEFAULTS.shear] },
+      },
+      static: {
+        vertical: { enabled: true, color: [...GUIDES_DEFAULTS.vertical] },
+        horizontal: { enabled: true, color: [...GUIDES_DEFAULTS.horizontal] },
+        diagonal: { enabled: true, color: [...GUIDES_DEFAULTS.diagonal] },
+        antidiagonal: { enabled: true, color: [...GUIDES_DEFAULTS.antidiagonal] },
+      },
+      /** Placed static guides: { axis: 'x' | 'y', pos: world coordinate }. */
+      lines: [],
+    };
+    /** Playback speed multiplier (1 = real time). */
+    this.playSpeed = 1;
+    /** Edit ▸ Preferences (prefs.js). */
+    this.prefs = createPrefs();
+    /** Viewport drawing: 'webgl' (default when available) or 'canvas'. */
+    this.renderer = loadSetting('rigby.renderer', 'webgl');
+    this.frameRequest = false;
+    /** Bumped on every state change so panels know to refresh. */
+    this.version = 0;
+    /** Bumped when playback moves the time: only time-dependent views need to follow it. */
+    this.timeVersion = 0;
+    this.history = { undo: [], redo: [] };
+    /** JSON of the last committed document state, used to coalesce edits into undo steps. */
+    this.baseline = this.doc.toSnapshot();
+    this.saved = this.baseline;
+    this.docJson = this.baseline;
+    this.committedVersion = 0;
+    /** Bumps on every project load (open/new/sample), so a view can drop state tied to the old
+     *  document — e.g. the timeline's armed copy. Rides the state snapshot to the detached windows. */
+    this.docEpoch = 0;
+    /** The dopesheet's armed copy as plain data, shared across windows so detaching the timeline keeps
+     *  the copy and its preview. timeline.js owns it; the stamp bumps on every change. */
+    this.timelineClip = null;
+    this.timelineClipStamp = 0;
+  }
+
+  changed() {
+    invalidateConstraints(this.doc);
+    FPS = this.doc.settings?.fps ?? 30;
+    this.version++;
+  }
+
+  setStatus(text) {
+    this.status = text;
+    this.changed();
+  }
+
+  /** Workspace of the open project: its own, or the user's default for projects without one. */
+  get workspace() {
+    return this.doc.workspace ?? workspaceDef(loadSetting('rigby.workspace', 'game')).id;
+  }
+
+  /** Switches the project's workspace (which tools are shown; the animation data is untouched). */
+  setWorkspace(id) {
+    const ws = workspaceDef(id);
+    this.doc.workspace = ws.id;
+    saveSetting('rigby.workspace', ws.id);
+    this.showFrame = ws.features.has('outputFrame');
+    this.setStatus(t('{name} workspace: {description}', { name: t(ws.label), description: t(ws.description) }));
+  }
+
+  /** Replaces the document (new/open/sample) and resets editor state. */
+  loadDocument(doc, path) {
+    this.meshEdit = null;
+    this.shapeEdit = null;
+    this.anim = doc.animations.length ? 0 : null;
+    this.doc = doc;
+    FPS = doc.settings?.fps ?? 30;
+    this.showFrame = workspaceDef(this.workspace).features.has('outputFrame');
+    this.path = path;
+    this.sel = null;
+    this.multi.clear();
+    this.pending.clear();
+    this.selectedKeys.clear();
+    this.docEpoch++; // a new project: views drop state tied to the old document (e.g. the armed copy)
+    this.timelineClip = null; // and the armed copy's data is cleared authoritatively (propagates to panels)
+    this.timelineClipStamp++;
+    // Per-bone onion settings belong to the document they were made for.
+    this.onion.perBone.clear();
+    this._onionCache = null;
+    this.time = 0;
+    this.playing = false;
+    this.history = { undo: [], redo: [] };
+    this.docJson = this.baseline = this.saved = doc.toSnapshot();
+    this.frameRequest = true;
+    this.changed();
+  }
+
+  dirty() {
+    return this.docJson !== this.saved;
+  }
+
+  currentAnimation() {
+    return this.anim === null ? undefined : this.doc.animations[this.anim];
+  }
+
+  /** Pose shown in the viewport: setup pose, or the current animation frame in animate mode. */
+  pose() {
+    const pose = new Pose(this.doc);
+    const anim = this.currentAnimation();
+    if (this.mode === Mode.Animate && anim) {
+      // Physics simulates while playing (state kept across frames) and rests otherwise.
+      if (this.playing) {
+        pose.physics = this.physics;
+        pose.physicsDelta = this.physicsDelta;
+        this.physicsDelta = 0;
+      } else if (this.physics.size) {
+        this.physics.clear();
+      }
+      pose.apply(this.doc, anim, this.time, 1);
+      // Unkeyed changes override the animated values until they are keyed or discarded.
+      for (const [bone, channels] of this.pending) {
+        if (!pose.local[bone]) continue;
+        for (const values of Object.values(channels)) Object.assign(pose.local[bone], values);
+      }
+      pose.updateWorld(this.doc);
+      // Scenes: deep layers drift behind near ones as the camera moves (see core/scene.js).
+      if (this.doc.scene) {
+        if (this._cameraVersion !== this.version) {
+          this._setupCamera = setupCameraPosition(this.doc);
+          this._cameraVersion = this.version;
+        }
+        applyParallax(this.doc, this.doc.scene, pose, this._setupCamera);
+      }
+    }
+    return pose;
+  }
+
+  /**
+   * The scene's actors posed for the stage pose `stagePose` (see actors.js): Map actor name ->
+   * { actor, doc, pose }. Empty for projects without a scene.
+   */
+  actorPoses(stagePose) {
+    if (!this.doc.scene?.actors.length) return new Map();
+    // Drawing, outlines and hit tests ask for the same frame: pose the actors once per stage pose.
+    if (this._actorPoses?.stage === stagePose) return this._actorPoses.map;
+    const delta = this.actorPhysicsDelta ?? 0;
+    this.actorPhysicsDelta = 0;
+    const map = poseActors(this, stagePose, delta);
+    this._actorPoses = { stage: stagePose, map };
+    return map;
+  }
+
+  /** A bone's own onion override (by bone index), or undefined. */
+  onionOverride(bone) {
+    return onion.onionOverride(this.doc, this.onion, bone);
+  }
+
+  /** Sets a bone's own onion override (by bone index), or removes it when `entry` is null. */
+  setOnionOverride(bone, entry) {
+    onion.setOnionOverride(this.doc, this.onion, bone, entry);
+  }
+
+  /** How many bones of this document have their own onion settings (see onion.js). */
+  onionOverrideCount() {
+    return onion.onionOverrideCount(this.doc, this.onion);
+  }
+
+  /** The onion settings in effect for a bone, or null when it is not ghosted (see onion.js). */
+  onionFor(bone, overrides) {
+    return onion.onionFor(this.doc, this.onion, bone, overrides);
+  }
+
+  /** True when any bone is currently showing onion ghosts (for the "predictions active" notice). */
+  onionActive() {
+    const o = this.onion;
+    if (!o.enabled || this.mode !== Mode.Animate || !this.currentAnimation()) return false;
+    if (this.onionOverrideCount() === 0) return (o.showFuture && o.future > 0) || (o.showPast && o.past > 0);
+    return true;
+  }
+
+  /**
+   * Draw instructions for onion skinning: an array of { pose, tint, skip } to draw behind the
+   * current pose, nearest frames brightest, grouped so each bone gets its own frame count and
+   * color. Returns [] when disabled or not animating. Cached while the time and config hold.
+   */
+  onionDraws() {
+    const o = this.onion;
+    if (!o.enabled || this.mode !== Mode.Animate) return [];
+    const anim = this.currentAnimation();
+    if (!anim) return [];
+    const bones = this.doc.bones;
+    // Resolve each bone's effective settings once.
+    const overrides = this.onionOverrideCount();
+    const cfg = bones.map((_, b) => this.onionFor(b, overrides));
+    let maxPast = 0;
+    let maxFuture = 0;
+    for (const c of cfg) {
+      if (!c) continue;
+      maxPast = Math.max(maxPast, c.past);
+      maxFuture = Math.max(maxFuture, c.future);
+    }
+    if (maxPast === 0 && maxFuture === 0) return [];
+    const key = [this.version, this.timeVersion, this.time, overrides, maxPast, maxFuture, JSON.stringify([...o.perBone]), o.pastColor.join(','), o.futureColor.join(','), o.step].join('|');
+    if (this._onionCache?.key === key) return this._onionCache.draws;
+
+    const draws = [];
+    const dur = anim.duration;
+    const dt = Math.max(1, Math.round(o.step ?? 1)) / FPS;
+    // One distance in one direction: the ghosted bones at that distance, grouped by color, each
+    // group drawn as one skeleton masked to its bones. Nearer frames are brighter.
+    const addDistance = (dir, d) => {
+      const maxN = dir > 0 ? maxFuture : maxPast;
+      const groups = new Map();
+      bones.forEach((_, b) => {
+        const c = cfg[b];
+        if (!c || (dir > 0 ? c.future : c.past) < d) return;
+        const color = dir > 0 ? c.futureColor : c.pastColor;
+        const ckey = color.join(',');
+        if (!groups.has(ckey)) groups.set(ckey, { color, bones: new Set() });
+        groups.get(ckey).bones.add(b);
+      });
+      if (!groups.size) return;
+      const pose = this.ghostPose(anim, this.time + dir * d * dt, dur, o.loop);
+      if (!pose) return;
+      const alpha = 0.5 * (1 - (d - 1) / Math.max(1, maxN));
+      for (const g of groups.values()) {
+        const skip = overrides === 0 ? null : (slot) => !g.bones.has(this.doc.slots[slot]?.bone);
+        draws.push({ pose, tint: [g.color[0], g.color[1], g.color[2], alpha], skip });
+      }
+    };
+    // Farthest first so nearer (brighter) ghosts land on top; past then future at each distance.
+    for (let d = Math.max(maxPast, maxFuture); d >= 1; d--) {
+      if (d <= maxPast) addDistance(-1, d);
+      if (d <= maxFuture) addDistance(1, d);
+    }
+    this._onionCache = { key, draws };
+    return draws;
+  }
+
+  /** A posed skeleton at time `t` (looping or clamped), or null when outside a non-looping clip. */
+  ghostPose(anim, t, dur, loop) {
+    let tt = t;
+    if (dur > 0 && loop) tt = remEuclid(t, dur);
+    else if (t < 0 || (dur > 0 && t > dur)) return null;
+    const pose = new Pose(this.doc);
+    pose.apply(this.doc, anim, tt, 1);
+    pose.updateWorld(this.doc);
+    return pose;
+  }
+
+  /** Bones that tools and keying act on: the primary selection plus any additional ones. */
+  selectedBones() {
+    const out = [...this.multi].filter((b) => b < this.doc.bones.length);
+    const primary = selBone(this.sel);
+    if (primary !== null && primary < this.doc.bones.length && !out.includes(primary)) out.unshift(primary);
+    return out;
+  }
+
+  /** Selects one item (bone or slot), or toggles a bone in the selection when `add` is true. */
+  select(item, add = false) {
+    const bone = selBone(item);
+    if (add && bone !== null) {
+      const bones = new Set(this.selectedBones());
+      if (bones.has(bone)) bones.delete(bone);
+      else bones.add(bone);
+      this.multi = bones;
+      this.sel = bones.size ? { bone: bones.has(bone) ? bone : [...bones][0] } : null;
+    } else {
+      this.sel = item;
+      this.multi.clear();
+    }
+    this.changed();
+  }
+
+  deselect() {
+    this.sel = null;
+    this.multi.clear();
+    this.selectedKeys.clear();
+    this.changed();
+  }
+
+  /** Lights up `bone` (index, or null to clear) in the viewport, tree and timeline at once. */
+  setHover(bone) {
+    const b = bone !== null && bone !== undefined && bone >= 0 && bone < this.doc.bones.length ? bone : null;
+    if (b === this.hoverBone) return;
+    this.hoverBone = b;
+    this.onHoverChange?.(b);
+  }
+
+  /** Sets which draw-order images glow in the viewport (`{ above, dragged, below }` slot indices, any
+   *  of them null, or the whole thing null to clear). Shared across windows like the bone hover, so
+   *  the editor's viewport lights up from a detached Tree. */
+  setImageGlow(glow) {
+    this.imageGlow = glow && glow.dragged !== null && glow.dragged !== undefined ? glow : null;
+  }
+
+  /** Drops unkeyed changes (they only live until the time, animation or mode changes). */
+  discardPending(reason = '') {
+    if (!this.pending.size) return;
+    this.pending.clear();
+    if (reason) this.status = t('Unkeyed changes discarded ({reason}). Key them with K or turn on Auto key.', { reason });
+    this.changed();
+  }
+
+  setKeymap(id) {
+    this.keymap = id;
+    savePreset(id);
+    this.changed();
+  }
+
+  /** Saves the user's own keymap and makes it the active shortcut set. */
+  setCustomKeymap(custom) {
+    this.customKeymap = custom;
+    saveCustom(custom);
+    this.setKeymap('custom');
+  }
+
+  undo() {
+    this.syncJson();
+    const prev = this.history.undo.pop();
+    if (prev === undefined) return;
+    this.history.redo.push(this.docJson);
+    this.restore(prev);
+  }
+
+  redo() {
+    this.syncJson();
+    const next = this.history.redo.pop();
+    if (next === undefined) return;
+    this.history.undo.push(this.docJson);
+    this.restore(next);
+  }
+
+  restore(json) {
+    const before = this.doc;
+    this.doc = Skeleton.fromObject(JSON.parse(json));
+    onion.followBoneRenames(this.onion, before, this.doc);
+    FPS = this.doc.settings?.fps ?? 30;
+    this.docJson = this.baseline = json;
+    this.selectedKeys.clear();
+    this.sanitize();
+    this.committedVersion = ++this.version;
+  }
+
+  syncJson() {
+    this.docJson = this.doc.toSnapshot();
+  }
+
+  /** Clamps selections that may point past the end of the document after structural edits. */
+  sanitize() {
+    const b = selBone(this.sel);
+    const s = selSlot(this.sel);
+    if ((b !== null && b >= this.doc.bones.length) || (s !== null && s >= this.doc.slots.length)) this.sel = null;
+    if (this.hoverBone !== null && this.hoverBone >= this.doc.bones.length) this.hoverBone = null;
+    if (this.imageGlow) {
+      const n = this.doc.slots.length;
+      const g = this.imageGlow;
+      if ([g.above, g.dragged, g.below].some((i) => i !== null && i !== undefined && i >= n)) this.imageGlow = null;
+    }
+    if (this.anim !== null && this.anim >= this.doc.animations.length) {
+      this.anim = this.doc.animations.length ? this.doc.animations.length - 1 : null;
+    }
+  }
+
+  /** Records an undo step once an edit gesture has finished (`busy` while dragging or typing). */
+  commitHistory(busy) {
+    // Commit only when the document changed since the last commit and no gesture is in flight. We do
+    // NOT skip this while playing: playback alone never bumps `version` (advancePlayback calls
+    // changed() only when stopped), but an edit made while the timeline runs does — and it must still
+    // settle into docJson so dirty() shows the `*` and undo records it. (A former `this.playing`
+    // guard here dropped edits made during playback until you stopped.)
+    if (busy || this.committedVersion === this.version) return;
+    this.committedVersion = this.version;
+    this.syncJson();
+    if (this.docJson !== this.baseline) {
+      this.history.undo.push(this.baseline);
+      this.baseline = this.docJson;
+      this.history.redo = [];
+      while (this.history.undo.length > this.prefs.get('editing.undoSteps')) this.history.undo.shift();
+    }
+  }
+
+  /** Opens a .rigby work file, or imports skeleton JSON, from `path` on the file system `fs`. */
+  async openFrom(path, fs) {
+    try {
+      const { doc, warnings, imported, audio, actorFiles } = await io.openProject(path, fs, this.images);
+      stopAudio();
+      sounds.clear();
+      for (const [name, bytes] of audio ?? []) await addSound(name, bytes).catch(() => warnings.push(t("sound '{name}' cannot be decoded", { name })));
+      warnings.push(...(await loadActors(actorFiles ?? new Map(), this.images)));
+      // Skeleton exports come from game workflows: open them in the game workspace.
+      if (imported) doc.workspace = WORKSPACES.game.id;
+      // Imported files are not work files: the first Save asks where to put the .rigby file.
+      this.loadDocument(doc, imported ? null : path);
+      // A backup (walk.rigby1) opens as a copy: Save asks where to keep it instead of overwriting it.
+      const backup = isBackup(path);
+      this.saveTarget = !imported && !backup && fs.reusable ? { path, fs } : null;
+      const what = imported ? t('Imported') : backup ? t('Opened the backup') : t('Opened');
+      if (platform.isDesktop && fs.reusable) rememberProject({ kind: 'file', path });
+      track(imported ? 'editor-import-skeleton' : 'editor-open');
+      const note = backup ? t(' (Save asks where to keep it)') : '';
+      this.setStatus(warnings.length ? t('{what} with warnings: {warnings}', { what, warnings: warnings.join('; ') }) : `${what} ${path}${note}`);
+      return { ok: true, warnings };
+    } catch (e) {
+      this.setStatus(t('Could not open {path}: {error}', { path, error: errorText(e) }));
+      return { ok: false, error: e };
+    }
+  }
+
+  /**
+   * Browser: opens the project among picked or dropped files (a work file, a skeleton .json/.skel,
+   * a DragonBones _ske.json), reading its images and atlas from the same files. When files it needs
+   * are missing, names them and asks for just those. `path` keeps the project chosen before.
+   */
+  async openFiles(files, path = null) {
+    let chosen = path ? files.find((f) => f.name === path) : null;
+    if (!chosen) {
+      const ranked = [];
+      let texAtlas = false;
+      for (const f of files) {
+        const text = /\.json$/i.test(f.name) ? await f.text() : null;
+        const kind = io.projectKind(f.name, text);
+        if (kind) ranked.push({ file: f, ...kind });
+        else if (text !== null && io.isDragonBonesAtlasText(text)) texAtlas = true;
+      }
+      if (!ranked.length) {
+        return showResult(this, {
+          ok: false,
+          title: t('Nothing to open'),
+          detail: texAtlas
+            ? t('That is the DragonBones texture atlas (_tex.json). Pick the skeleton (_ske.json) with it, and its image.')
+            : t('Pick a Rigby2D work file (.rigby), a skeleton (.json or .skel) or a DragonBones skeleton (_ske.json), together with its images and atlas.'),
+        });
+      }
+      // Best kind first; among equals the plainest name (hero_ske.json before hero_show_ske.json).
+      ranked.sort((a, b) => a.rank - b.rank || a.file.name.length - b.file.name.length || a.file.name.localeCompare(b.file.name));
+      const best = ranked.filter((r) => r.rank === ranked[0].rank);
+      chosen = best[0].file;
+      if (best.length > 1) {
+        chosen = await askChoice({
+          title: t('Which one?'),
+          detail: t('These files are all {kind} files. Pick the one to open.', { kind: best[0].kind }),
+          choices: best.map((r, i) => ({ label: r.file.name, value: r.file, primary: i === 0 })),
+        });
+        if (!chosen) return;
+      }
+    }
+    const opened = await this.openFrom(chosen.name, platform.memoryFs(files));
+    if (!opened.ok || /\.rigby\d?$/i.test(chosen.name)) return;
+    // Imported skeletons read their images from the other picked files: ask for any that weren't.
+    const { names, dragonBonesAtlas } = io.missingFiles(opened.warnings);
+    if (!names.length && !dragonBonesAtlas) return;
+    const list = [...(dragonBonesAtlas ? [chosen.name.replace(/_ske\.json$/i, '_tex.json')] : []), ...names.map((n) => (/\.\w+$/.test(n) ? n : `${n}.png`))];
+    const more = await askChoice({
+      title: t('Some files are missing'),
+      detail: t("{name} opened, but these files weren't picked with it. Add them to see the whole character.", { name: chosen.name }),
+      list: list.length > 12 ? [...list.slice(0, 12), t('… and {count} more', { count: list.length - 12 })] : list,
+      choices: [
+        { label: t('Continue without'), value: false },
+        { label: t('Add files…'), value: true, primary: true },
+      ],
+    });
+    if (!more) return;
+    const added = await platform.pickProjectFiles();
+    if (!added.length) return;
+    // The new files win over same-named earlier ones; the project stays the one chosen.
+    const replaced = new Set(added.map((f) => f.name));
+    await this.openFiles([...files.filter((f) => !replaced.has(f.name)), ...added], chosen.name);
+  }
+
+  async confirmDiscard() {
+    this.syncJson();
+    if (!this.dirty()) return true;
+    return platform.confirmDialog(t('Discard unsaved changes?'), t('Unsaved changes'));
+  }
+
+  /** Starts an empty project in workspace `id` (default: the last one used). */
+  async newDocument(id) {
+    if (!(await this.confirmDiscard())) return;
+    const ws = workspaceDef(id ?? this.workspace);
+    const doc = new Skeleton();
+    doc.workspace = ws.id;
+    doc.settings.fps = ws.fps;
+    saveSetting('rigby.workspace', ws.id);
+    this.images.clear();
+    actors.clear();
+    this.loadDocument(doc, null);
+    this.saveTarget = null;
+    this.setStatus(t('New {name} project', { name: t(ws.label).toLowerCase() }));
+  }
+
+  /** A bundled demo project (see demos.js) with its images loaded; the open document is not replaced. */
+  async demoDocument(id = 'rigbytron') {
+    const demo = demoById(id);
+    const blob = await demoBlob(demo);
+    return io.openProject(demo.file, platform.memoryFs([new File([blob], demo.file)]), this.images);
+  }
+
+  /**
+   * Opens a bundled demo project (with its sounds), playing its animation. It is not tied to a file:
+   * Save asks where to keep a copy. `ask` confirms discarding unsaved changes.
+   */
+  async openDemo(id = 'rigbytron', ask = true) {
+    if (ask && !(await this.confirmDiscard())) return;
+    const demo = demoById(id);
+    try {
+      const blob = await demoBlob(demo);
+      await this.openFrom(demo.file, platform.memoryFs([new File([blob], demo.file)]));
+      if (this.path !== demo.file) return; // openFrom reported what went wrong
+      this.saveTarget = null;
+      this.anim = Math.max(0, this.doc.animations.findIndex((a) => a.name === demo.animation));
+      this.mode = Mode.Animate;
+      this.playing = true;
+      this.playDirection = 1;
+      this.frameRequest = true;
+      rememberProject({ kind: 'demo', id: demo.id, name: demo.name });
+      this.setStatus(t('{name} demo: {description} Save keeps a copy. Demo content © Rigby2D, for learning and evaluation only (see the demo license in File ▸ Open demo).', { name: demo.name, description: t(demo.description) }));
+    } catch (e) {
+      this.setStatus(t('Could not open the demo: {error}', { error: errorText(e) }) + (DEMOS_REMOTE ? ' ' + t('Demos download from the Rigby2D website: check the internet connection.') : ''));
+    }
+  }
+
+  /** Reopens an entry of File ▸ Open recent; one that cannot be opened any more leaves the list. */
+  async openRecent(entry) {
+    if (entry.kind === 'demo') return this.openDemo(entry.id);
+    const file = platform.desktopFile(entry.path);
+    if (!file || !(await this.confirmDiscard())) return;
+    await this.openFrom(file.path, file.fs);
+    if (this.path !== entry.path && !this.status.startsWith('Imported')) {
+      forgetProject(entry);
+      this.setStatus(`${this.status} ${t('It was removed from the recent projects.')}`);
+    }
+  }
+
+  async openDialog() {
+    if (!(await this.confirmDiscard())) return;
+    if (!platform.isDesktop) {
+      const files = await platform.pickProjectFiles();
+      if (files.length) await this.openFiles(files);
+      return;
+    }
+    const picked = await this.guard(() => platform.pickProject());
+    if (picked) await this.openFrom(picked.path, picked.fs);
+  }
+
+  /** Export format version: the imported file's version, or 4.3 for new work. */
+  saveVersion() {
+    const v = String(this.doc.header?.version ?? '');
+    if (v.startsWith('3.')) return '3.8';
+    if (/^4.[0-2](.|$)/.test(v)) return '4.2';
+    return '4.3';
+  }
+
+  /** Saves the `.rigby` work file (the complete document and its images in one file). */
+  async save(saveAs) {
+    let target = saveAs ? null : this.saveTarget;
+    if (!target) {
+      const name = `${this.doc.name || 'untitled'}.${io.WORKFILE_EXT}`;
+      target = await this.guard(() => platform.pickSaveTarget(name, t('Rigby2D work file'), io.WORKFILE_EXT, { single: true }));
+      if (!target) return;
+    }
+    try {
+      const { warnings } = await this.writeWorkfile(target.path, target.fs, { backups: this.prefs.get('files.backups') });
+      await target.fs.finish();
+      this.path = target.path;
+      this.saveTarget = target.fs.reusable ? target : null;
+      this.syncJson();
+      this.baseline = this.saved = this.docJson;
+      if (platform.isDesktop && target.fs.reusable) rememberProject({ kind: 'file', path: target.path });
+      const note = warnings.length ? t(' (warnings: {warnings})', { warnings: warnings.join('; ') }) : '';
+      track('editor-save');
+      this.setStatus(t('Saved {file}', { file: target.path }) + note);
+    } catch (e) {
+      this.setStatus(t('Save failed: {error}', { error: errorText(e) }));
+    }
+  }
+
+  /**
+   * Writes the open project as a `.rigby` work file with its sounds and scene characters (Save, and
+   * the auto-saves in recoveryui.js). `backups`: previous versions to keep (desktop).
+   */
+  writeWorkfile(path, fs, { backups = 0 } = {}) {
+    const used = new Set(this.doc.audio.map((t) => t.sound));
+    const audioFiles = [...sounds].filter(([name]) => used.has(name)).map(([name, s]) => ({ path: `audio/${name}`, bytes: s.bytes }));
+    return io.saveWorkfile(path, fs, this.doc, this.images, [...audioFiles, ...actorEntries(this.doc)], { backups });
+  }
+
+  /** Writes skeleton JSON (.json + .atlas + .png). `version` is "3.8" or "4.2". */
+  async exportSkeletonJson(version) {
+    const target = await this.guard(() => platform.pickSaveTarget(`${this.doc.name || 'skeleton'}.json`, t('Skeleton JSON'), 'json'));
+    if (!target) return;
+    try {
+      const { atlasPath, warnings } = await io.exportSkeletonJson(target.path, target.fs, this.doc, this.images, version);
+      await target.fs.finish();
+      const note = warnings.length ? t(' (warnings: {warnings})', { warnings: warnings.join('; ') }) : '';
+      track('editor-export-json');
+      showResult(this, { ok: true, title: t('Skeleton JSON {version} exported', { version }), detail: t('With its atlas {path}.', { path: atlasPath }) + note, path: target.path });
+    } catch (e) {
+      showResult(this, { ok: false, title: t('Skeleton JSON export failed'), detail: errorText(e) });
+    }
+  }
+
+  /** Exports the scene for runtimes: a manifest plus the stage and every character as skeleton JSON. */
+  async exportScene() {
+    if (!this.doc.scene) return this.setStatus(t('This project has no scene to export (File ▸ New ▸ Scene)'));
+    const target = await this.guard(() => platform.pickSaveTarget(`${this.doc.name || 'scene'}.scene.json`, t('Rigby2D scene'), 'json'));
+    if (!target) return;
+    try {
+      const list = this.doc.scene.actors
+        .filter((a) => actors.get(a.id))
+        .map((a) => ({ id: a.id, doc: actors.get(a.id).doc, images: { get: (name) => this.images.get(imageKey(a.id, name)) } }));
+      const { files, warnings } = await io.exportScene(target.path, target.fs, this.doc, this.images, list);
+      await target.fs.finish();
+      const note = warnings.length ? t(' (warnings: {warnings})', { warnings: warnings.join('; ') }) : '';
+      track('editor-export-scene');
+      showResult(this, { ok: true, title: t('Scene exported'), detail: `${files.length} files.${note}`, path: files[0] });
+    } catch (e) {
+      showResult(this, { ok: false, title: t('Scene export failed'), detail: errorText(e) });
+    }
+  }
+
+  /** Writes a binary skeleton (.skel format 4.3 + .atlas + .png). */
+  async exportSkeletonBinary() {
+    const target = await this.guard(() => platform.pickSaveTarget(`${this.doc.name || 'skeleton'}.skel`, t('Binary skeleton'), 'skel'));
+    if (!target) return;
+    try {
+      const { atlasPath, warnings } = await io.exportSkeletonBinary(target.path, target.fs, this.doc, this.images);
+      await target.fs.finish();
+      const note = warnings.length ? t(' (warnings: {warnings})', { warnings: warnings.join('; ') }) : '';
+      track('editor-export-skel');
+      showResult(this, { ok: true, title: t('Binary skeleton exported'), detail: t('With its atlas {path}.', { path: atlasPath }) + note, path: target.path });
+    } catch (e) {
+      showResult(this, { ok: false, title: t('Binary export failed'), detail: errorText(e) });
+    }
+  }
+
+  async importPsd() {
+    const [file] = (await this.guard(() => platform.pickImportFiles(t('Photoshop'), ['psd'], false))) ?? [];
+    if (!file) return;
+    try {
+      const n = await io.importPsd(file, this.doc, this.images);
+      this.frameRequest = true;
+      track('editor-import-psd');
+      this.setStatus(t('Imported {count} layers from {file}', { count: n, file: file.name }));
+    } catch (e) {
+      this.setStatus(`PSD import failed: ${errorText(e)}`);
+    }
+  }
+
+  /** Imports an SVG drawing (Inkscape, Affinity…): each layer becomes a part, placed where it was drawn. */
+  async importSvg() {
+    const [file] = (await this.guard(() => platform.pickImportFiles('SVG drawing', ['svg'], false))) ?? [];
+    if (!file) return;
+    try {
+      const { svgSize } = await import('./svgimport.js');
+      const root = /<svg\b[^>]*>/i.exec(new TextDecoder().decode(file.bytes))?.[0] ?? '';
+      const attr = (n) => new RegExp(`\\s${n}\\s*=\\s*["']([^"']*)["']`, 'i').exec(root)?.[1] ?? null;
+      const size = svgSize({ width: attr('width'), height: attr('height'), viewBox: attr('viewBox') });
+      if (!size) throw new Error('the SVG has no size (width, height or viewBox)');
+      // Vector art draws sharp at any size: pick how many pixels the parts get.
+      const px = (k) => {
+        const f = Math.min(k, io.SVG_MAX_SIDE / Math.max(size.width, size.height));
+        return `${Math.round(size.width * f)}×${Math.round(size.height * f)} px`;
+      };
+      const big = Math.max(size.width, size.height);
+      const preferred = big <= 1024 ? 2 : big <= 3000 ? 1 : 0.5;
+      const scale = await askOption({
+        title: t('Import {file}', { file: file.name }),
+        detail: t('Each layer becomes a part, placed where you drew it. Vector art stays sharp at any size: choose how large to draw it.'),
+        options: [0.5, 1, 2, 4].map((k) => ({ label: `${k * 100}% · ${px(k)}`, value: k })),
+        value: preferred,
+        okLabel: t('Import'),
+      });
+      if (!scale) return;
+      const n = await io.importSvg(file, selBone(this.sel) ?? 0, this.doc, this.images, { scale });
+      this.frameRequest = true;
+      this.changed();
+      this.commitHistory?.();
+      track('editor-import-svg');
+      this.setStatus(t('Imported {count} layers from {file}', { count: n, file: file.name }));
+    } catch (e) {
+      this.setStatus(`SVG import failed: ${errorText(e)}`);
+    }
+  }
+
+  /** Film: adds sound files as audio tracks of the current animation, starting at frame 0. */
+  async importAudio() {
+    const anim = this.currentAnimation();
+    if (!anim) return this.setStatus(t('Select an animation first: audio tracks belong to an animation'));
+    const files = await this.guard(() => platform.pickImportFiles(t('Audio'), ['wav', 'mp3', 'ogg', 'm4a', 'aac', 'flac'], true));
+    if (!files?.length) return;
+    for (const f of files) {
+      const name = io.basename(f.name);
+      try {
+        await addSound(name, f.bytes);
+        this.doc.audio.push({ sound: name, animation: anim.name, offset: 0, volume: 1 });
+      } catch (e) {
+        this.setStatus(t('Cannot decode {name}: {error}', { name, error: errorText(e) }));
+        return;
+      }
+    }
+    this.setStatus(t("Added {count} audio track(s) to '{name}'", { count: files.length, name: anim.name }));
+  }
+
+  async importImages() {
+    const files = (await this.guard(() => platform.pickImportFiles(t('Images'), ['png'], true))) ?? [];
+    if (!files.length) return;
+    try {
+      const n = await io.importPngs(files, selBone(this.sel) ?? 0, this.doc, this.images);
+      this.frameRequest = true;
+      this.setStatus(t('Imported {count} images', { count: n }));
+    } catch (e) {
+      this.setStatus(t('Image import failed: {error}', { error: errorText(e) }));
+    }
+  }
+
+  /** Runs a dialog/picker, reporting failures in the status bar. */
+  async guard(fn) {
+    try {
+      return await fn();
+    } catch (e) {
+      this.setStatus(t('Dialog failed: {error}', { error: errorText(e) }));
+      return null;
+    }
+  }
+
+  toggleMode() {
+    this.discardPending('mode changed');
+    if (this.mode === Mode.Setup) {
+      edit.ensureAnimation(this);
+      this.mode = Mode.Animate;
+    } else {
+      this.playing = false;
+      this.mode = Mode.Setup;
+    }
+    this.changed();
+  }
+
+  /** Starts playing in `direction` (1 forward, -1 backward), or stops if already playing that way. */
+  togglePlay(direction = 1) {
+    // A boomerang turns around by itself: either play key stops it.
+    const stop = this.playing && (this.playDirection === direction || (this.boomerang && this.looping));
+    this.playing = !stop && this.anim !== null;
+    this.playDirection = direction;
+    if (this.playing) {
+      this.discardPending('playback started');
+      this.mode = Mode.Animate;
+    }
+    this.changed();
+  }
+
+  stepFrame(dir) {
+    this.playing = false;
+    this.discardPending('time changed');
+    const dur = this.currentAnimation()?.duration ?? 0;
+    this.time = Math.max(0, Math.round(this.time * FPS) + dir) / FPS;
+    if (dur > 0) this.time = Math.min(this.time, dur);
+    this.changed();
+  }
+
+  setTime(t) {
+    this.playing = false;
+    if (Math.abs(t - this.time) > 1e-9) this.discardPending('time changed');
+    this.time = Math.max(0, t);
+    this.changed();
+  }
+
+  /** Key times of the selected bones' timelines (all timelines when nothing is selected). */
+  keyTimes() {
+    const anim = this.currentAnimation();
+    if (!anim) return [];
+    const bones = new Set(this.selectedBones());
+    const times = new Set();
+    for (const tl of anim.bones) {
+      if (bones.size && !bones.has(tl.bone)) continue;
+      for (const [k, keys] of Object.entries(tl)) if (Array.isArray(keys)) for (const key of keys) times.add(snap(key.time));
+    }
+    if (!bones.size) {
+      for (const tl of anim.slots) for (const keys of Object.values(tl)) if (Array.isArray(keys)) for (const key of keys) times.add(snap(key.time));
+      for (const t of anim.deform) for (const key of t.keys) times.add(snap(key.time));
+      for (const t of anim.ik) for (const key of t.keys) times.add(snap(key.time));
+      for (const key of [...anim.drawOrder, ...anim.events]) times.add(snap(key.time));
+    }
+    return [...times].sort((a, b) => a - b);
+  }
+
+  /** Moves to the next (dir 1) or previous (dir -1) key. */
+  stepKey(dir) {
+    const now = snap(this.time);
+    const times = this.keyTimes();
+    const target = dir > 0 ? times.find((t) => t > now + 1e-6) : [...times].reverse().find((t) => t < now - 1e-6);
+    if (target !== undefined) this.setTime(target);
+  }
+
+  jumpToEnd() {
+    const anim = this.currentAnimation();
+    if (anim) this.setTime(anim.lastKeyTime());
+  }
+
+  advancePlayback(dt) {
+    if (!this.playing) return;
+    const anim = this.currentAnimation();
+    if (!anim) {
+      this.playing = false;
+      return;
+    }
+    const before = this.time;
+    const step = Math.min(dt, 0.1) * (this.playSpeed || 1);
+    this.physicsDelta += step;
+    this.actorPhysicsDelta = (this.actorPhysicsDelta ?? 0) + step;
+    this.time += step * this.playDirection;
+    let wrapped = false;
+    if (this.time > anim.duration || this.time < 0) {
+      if (this.looping && this.boomerang && anim.duration > 0) {
+        // Boomerang: bounce off either end and play back the other way.
+        const d = anim.duration;
+        while (this.time > d || this.time < 0) {
+          if (this.time > d) {
+            this.time = 2 * d - this.time;
+            this.playDirection = -1;
+          } else {
+            this.time = -this.time;
+            this.playDirection = 1;
+          }
+        }
+      } else if (this.looping && anim.duration > 0) {
+        this.time = remEuclid(this.time, anim.duration);
+        wrapped = true;
+      } else {
+        this.time = Math.min(Math.max(this.time, 0), anim.duration);
+        this.playing = false;
+      }
+    }
+    // Events crossed while playing forward are shown briefly in the viewport.
+    if (this.playDirection > 0) {
+      const crossed = (e) => (wrapped ? e.time > before || e.time <= this.time : e.time > before && e.time <= this.time);
+      const now = performance.now();
+      for (const e of anim.events) if (crossed(e)) this.firedEvents.push({ name: e.name, at: now });
+      this.firedEvents = this.firedEvents.filter((f) => now - f.at < 1200).slice(-6);
+    }
+    // Only the time moved: the document is unchanged, so panels that do not show the time are
+    // not rebuilt (rebuilding them every frame made the editor lag while playing).
+    this.timeVersion++;
+    if (!this.playing) this.changed();
+  }
+
+  /**
+   * The editor state shared with the detached panel windows: the document plus what every window
+   * must agree on. This is the single source of what crosses windows — the sync layer derives the
+   * change signature and the message payload from it, so adding a field here (and reading it back in
+   * applyStateSnapshot) shares it everywhere, with nothing else to wire. Status and viewport stay
+   * local to each window; viewport-coupled modes (meshEdit/shapeEdit) are shared so a panel can enter
+   * them on the authority, whose viewport then responds.
+   */
+  /**
+   * Makes sure an image's pixels are available in this window, requesting them from the authority
+   * the first time a detached panel needs to draw one. In the editor window every image is already
+   * loaded, so this is a no-op (`onMissingImage` is null). Image pixels are deliberately not part of
+   * snapshotState (they are large and rarely change), so a mirror window fetches each on demand.
+   */
+  ensureImage(name) {
+    if (name && !this.images.contains(name)) this.onMissingImage?.(name);
+  }
+
+  snapshotState() {
+    return {
+      docJson: this.docJson,
+      docEpoch: this.docEpoch,
+      anim: this.anim,
+      time: this.time,
+      mode: this.mode,
+      timelineView: this.timelineView,
+      autoKey: this.autoKey,
+      playing: this.playing,
+      playSpeed: this.playSpeed,
+      looping: this.looping,
+      boomerang: this.boomerang,
+      fps: FPS,
+      sel: this.sel,
+      multi: [...this.multi],
+      hoverBone: this.hoverBone,
+      imageGlow: this.imageGlow,
+      meshEdit: this.meshEdit,
+      shapeEdit: this.shapeEdit,
+      // The dopesheet's armed copy (plain data), so detaching/docking the timeline carries the copy
+      // and its paste preview across to whichever window now holds the dopesheet. Stamp marks real
+      // changes, so the other window adopts only when it actually changed (see timeline.js).
+      timelineClip: this.timelineClip,
+      timelineClipStamp: this.timelineClipStamp,
+    };
+  }
+
+  /**
+   * Adopts a snapshot from the other window. `opts.undo` records one undo step for an adopted
+   * document edit (the editor window, which owns the single history, passes it). The dopesheet key
+   * selection is not here (it is addressed by index at the sync boundary); bone selection is.
+   */
+  applyStateSnapshot(s, opts = {}) {
+    // What forces a full panel rebuild (vs. just a time-dependent redraw during playback).
+    const struct = () => `${this.anim}|${this.mode}|${this.timelineView}|${this.autoKey}|${this.playing}|${JSON.stringify(this.sel)}|${[...this.multi]}|${JSON.stringify(this.meshEdit)}|${JSON.stringify(this.shapeEdit)}`;
+    const before = struct();
+    const prevHover = this.hoverBone;
+    let docChanged = false;
+    if (s.docJson && s.docJson !== this.docJson) {
+      docChanged = true;
+      if (opts.undo) {
+        this.syncJson();
+        this.history.undo.push(this.docJson);
+        while (this.history.undo.length > this.prefs.get('editing.undoSteps')) this.history.undo.shift();
+        this.history.redo = [];
+      }
+      const prev = this.doc;
+      this.doc = Skeleton.fromObject(JSON.parse(s.docJson));
+      onion.followBoneRenames(this.onion, prev, this.doc);
+      // Keep our own canonical snapshot so the sync below is not mistaken for a fresh edit.
+      // Like restore() (undo/redo), this does NOT touch `saved`: adopting an edit from another
+      // window is a real change, so the editor (the authority) stays dirty until the user saves —
+      // the title keeps its * and New/Open still warn. `saved` means "what is on disk", and only
+      // new/open/save write it. Mirror windows never read dirty()/save, so their stale `saved` is
+      // harmless.
+      const canon = this.doc.toSnapshot();
+      this.docJson = this.baseline = canon;
+      this.selectedKeys.clear();
+    }
+    // Match the other window's frame rate so the ruler and the keys line up (changed() reads this).
+    if (typeof s.fps === 'number' && this.doc.settings) this.doc.settings.fps = s.fps;
+    if (typeof s.docEpoch === 'number') this.docEpoch = s.docEpoch; // a project load reached us: views reset
+    // The armed copy rides the snapshot; adopt it only when its stamp moved, so a per-frame sync does
+    // not clobber this window's own clipboard (timeline.js picks it up and draws its preview).
+    if (typeof s.timelineClipStamp === 'number' && s.timelineClipStamp !== this.timelineClipStamp) {
+      this.timelineClip = s.timelineClip ?? null;
+      this.timelineClipStamp = s.timelineClipStamp;
+    }
+    if (s.anim !== undefined) this.anim = s.anim;
+    if (typeof s.time === 'number') this.time = s.time;
+    if (s.mode) this.mode = s.mode;
+    if (s.timelineView) this.timelineView = s.timelineView;
+    if (typeof s.autoKey === 'boolean') this.autoKey = s.autoKey;
+    if (typeof s.playing === 'boolean') this.playing = s.playing;
+    if (typeof s.looping === 'boolean') this.looping = s.looping;
+    if (typeof s.boomerang === 'boolean') this.boomerang = s.boomerang;
+    if (typeof s.playSpeed === 'number') this.playSpeed = s.playSpeed; // the editor drives playback, so its speed must follow a panel's change
+    if ('sel' in s) this.sel = s.sel;
+    if (s.multi) this.multi = new Set(s.multi);
+    if ('hoverBone' in s) this.hoverBone = s.hoverBone;
+    if ('imageGlow' in s) this.imageGlow = s.imageGlow; // shared like hoverBone; read by the viewport each frame
+    if ('meshEdit' in s) this.meshEdit = s.meshEdit;
+    if ('shapeEdit' in s) this.shapeEdit = s.shapeEdit;
+    this.sanitize();
+    // Hover is shared but must not trigger a full panel rebuild (it changes as the cursor sweeps):
+    // the viewport and timeline canvases read hoverBone each frame; the tree updates its row class
+    // through onHoverChange, so fire it here when an adopted snapshot moved the hover.
+    if (this.hoverBone !== prevHover) this.onHoverChange?.(this.hoverBone);
+    // Only the time moved (playback): bump timeVersion so heavy panels are not rebuilt every frame.
+    if (docChanged || before !== struct()) this.changed();
+    else this.timeVersion++;
+    // This state came from the other window: mark it committed so it is not pushed straight back.
+    this.committedVersion = this.version;
+  }
+
+  title() {
+    const name = this.path ? io.basename(this.path) : 'untitled';
+    return `Rigby2D - ${name}${this.dirty() ? ' *' : ''}`;
+  }
+}
+
+/** A demo's work file (downloaded from the website by the desktop app; see demos.js). */
+async function demoBlob(demo) {
+  const res = await fetch(demo.url);
+  if (!res.ok) throw new Error(`${demo.file}: HTTP ${res.status}`);
+  return res.blob();
+}

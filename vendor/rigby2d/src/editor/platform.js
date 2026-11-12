@@ -1,0 +1,486 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Platform layer: native dialogs and file access in the desktop app (Tauri), and browser
+// equivalents (folder/file pickers, File System Access API or ZIP download) in the web build.
+//
+// A "file system" here is { readFile(path), readText(path), writeFile(path, bytes),
+// writeText(path, text), mkdir(path), list(dir), finish(), reusable }. `list` returns the file
+// names in a folder (empty when listing is not possible). Paths use the host's separators on
+// desktop and '/' in the browser.
+
+import { ask, open, save } from '@tauri-apps/plugin-dialog';
+import * as tfs from '@tauri-apps/plugin-fs';
+import { openUrl, revealItemInDir } from '@tauri-apps/plugin-opener';
+
+import { replaceWithBackups } from './recovery.js';
+import { zip } from './zip.js';
+
+export const isDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
+
+/**
+ * The desktop app shows its own menus: turns off the WebView's built-in right-click menu (Back,
+ * Reload, Inspect…), which no desktop application has. Text fields keep theirs (cut, copy, paste,
+ * spelling). Development builds keep it everywhere, for Inspect.
+ */
+export function blockNativeContextMenu({ dev = false } = {}) {
+  if (!isDesktop || dev) return;
+  document.addEventListener('contextmenu', (e) => {
+    if (!(e.target instanceof Element) || !e.target.closest('input, textarea, [contenteditable=""], [contenteditable="true"]')) e.preventDefault();
+  });
+}
+
+const encoder = new TextEncoder();
+const decoder = new TextDecoder();
+
+// ---- desktop ----------------------------------------------------------------------------------
+
+const desktopFs = {
+  readFile: (p) => tfs.readFile(p),
+  readText: (p) => tfs.readTextFile(p),
+  writeFile: (p, bytes) => tfs.writeFile(p, bytes),
+  /** Saves through a temporary file, keeping `backups` previous versions (recovery.js). */
+  writeFileSafe: (path, bytes, { backups = 0 } = {}) => replaceWithBackups(tfs, path, bytes, backups),
+  writeText: (p, text) => tfs.writeTextFile(p, text),
+  mkdir: (p) => tfs.mkdir(p, { recursive: true }),
+  list: async (dir) => {
+    try {
+      return (await tfs.readDir(dir)).filter((e) => e.isFile).map((e) => e.name);
+    } catch {
+      return [];
+    }
+  },
+  finish: async () => {},
+  reusable: true,
+};
+
+// ---- browser ----------------------------------------------------------------------------------
+
+/** Normalizes a '/' path, resolving '.' and '..'. */
+function normalize(path) {
+  const out = [];
+  for (const part of path.replace(/\\/g, '/').split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') out.pop();
+    else out.push(part);
+  }
+  return out.join('/');
+}
+
+/** Read-only file system over files picked from a folder (keyed by their relative paths). */
+export function memoryFs(files) {
+  const byPath = new Map(files.map((f) => [normalize(f.webkitRelativePath || f.name), f]));
+  // Files picked one by one have no folders: `images/arm.png` is then found as the one `arm.png`.
+  const byName = new Map();
+  for (const f of files) byName.set(f.name.toLowerCase(), byName.has(f.name.toLowerCase()) ? null : f);
+  const get = (p) => {
+    const f = byPath.get(normalize(p)) ?? byName.get(normalize(p).split('/').pop().toLowerCase());
+    if (!f) throw new Error(`file not found: ${p}`);
+    return f;
+  };
+  return {
+    readFile: async (p) => new Uint8Array(await get(p).arrayBuffer()),
+    readText: async (p) => get(p).text(),
+    writeFile: async () => {
+      throw new Error('read-only');
+    },
+    writeText: async () => {
+      throw new Error('read-only');
+    },
+    mkdir: async () => {},
+    list: async (dir) => {
+      const prefix = normalize(dir);
+      return [...byPath.keys()]
+        .filter((k) => (prefix ? k.startsWith(prefix + '/') : true))
+        .map((k) => k.slice(prefix ? prefix.length + 1 : 0))
+        .filter((k) => k && !k.includes('/'));
+    },
+    finish: async () => {},
+    reusable: false,
+  };
+}
+
+/** Writable file system over a directory handle (File System Access API). */
+function directoryFs(root) {
+  const dirFor = async (parts, create) => {
+    let dir = root;
+    for (const p of parts) dir = await dir.getDirectoryHandle(p, { create });
+    return dir;
+  };
+  const write = async (path, data) => {
+    const parts = normalize(path).split('/');
+    const name = parts.pop();
+    const file = await (await dirFor(parts, true)).getFileHandle(name, { create: true });
+    const w = await file.createWritable();
+    await w.write(data);
+    await w.close();
+  };
+  const read = async (path) => {
+    const parts = normalize(path).split('/');
+    const name = parts.pop();
+    return (await (await dirFor(parts, false)).getFileHandle(name)).getFile();
+  };
+  return {
+    readFile: async (p) => new Uint8Array(await (await read(p)).arrayBuffer()),
+    readText: async (p) => (await read(p)).text(),
+    writeFile: write,
+    writeText: write,
+    mkdir: async (p) => {
+      await dirFor(normalize(p).split('/').filter(Boolean), true);
+    },
+    finish: async () => {},
+    reusable: true,
+  };
+}
+
+/** Collects one written file and downloads it as-is on finish() (single-file saves). */
+function singleFileFs(fileName) {
+  let data = null;
+  return {
+    readFile: async () => {
+      throw new Error('write-only');
+    },
+    readText: async () => {
+      throw new Error('write-only');
+    },
+    writeFile: async (_p, bytes) => (data = bytes),
+    writeText: async (_p, text) => (data = encoder.encode(text)),
+    mkdir: async () => {},
+    list: async () => [],
+    finish: async () => data && download(fileName, data),
+    reusable: false,
+  };
+}
+
+/** Collects written files and downloads them as a ZIP on finish(). */
+function zipFs(zipName) {
+  const files = new Map();
+  return {
+    readFile: async () => {
+      throw new Error('write-only');
+    },
+    readText: async () => {
+      throw new Error('write-only');
+    },
+    writeFile: async (p, bytes) => files.set(normalize(p), bytes),
+    writeText: async (p, text) => files.set(normalize(p), encoder.encode(text)),
+    mkdir: async () => {},
+    finish: async () => download(zipName, zip([...files].map(([path, bytes]) => ({ path, bytes })))),
+    reusable: false,
+  };
+}
+
+function download(name, bytes) {
+  const url = URL.createObjectURL(new Blob([bytes]));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
+/** Shows a hidden <input type=file>; resolves with the picked files (empty if cancelled). */
+function pickWithInput({ accept, multiple = false, directory = false }) {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    if (accept) input.accept = accept;
+    input.multiple = multiple;
+    if (directory) input.webkitdirectory = true;
+    input.addEventListener('change', () => resolve([...input.files]));
+    input.addEventListener('cancel', () => resolve([]));
+    input.click();
+  });
+}
+
+// ---- user data --------------------------------------------------------------------------------
+// The editor's own files (auto-saves, add-ons) under relative paths such as "recovery/x.rigby":
+// in the app's data folder on desktop (Windows: %LOCALAPPDATA%\io.github.jaisurya-dev-art.rigby2d),
+// in IndexedDB in the browser. list(prefix) returns every file below `prefix`, with its time.
+
+let dataRoot = null;
+async function dataPath(rel = '') {
+  if (!dataRoot) {
+    const { appLocalDataDir } = await import('@tauri-apps/api/path');
+    dataRoot = (await appLocalDataDir()).replace(/[\\/]$/, '');
+  }
+  const sep = dataRoot.includes('\\') ? '\\' : '/';
+  return rel ? `${dataRoot}${sep}${rel.split('/').join(sep)}` : dataRoot;
+}
+
+const desktopStore = {
+  location: (rel) => dataPath(rel),
+  async put(rel, bytes) {
+    const path = await dataPath(rel);
+    await tfs.mkdir(path.replace(/[\\/][^\\/]*$/, ''), { recursive: true });
+    await tfs.writeFile(path, bytes);
+  },
+  async get(rel) {
+    try {
+      return await tfs.readFile(await dataPath(rel));
+    } catch {
+      return null;
+    }
+  },
+  async remove(rel) {
+    try {
+      await tfs.remove(await dataPath(rel), { recursive: true });
+    } catch {
+      // Already gone.
+    }
+  },
+  async list(prefix) {
+    const out = [];
+    const walk = async (rel) => {
+      let entries = [];
+      try {
+        entries = await tfs.readDir(await dataPath(rel));
+      } catch {
+        return;
+      }
+      for (const e of entries) {
+        const child = `${rel}/${e.name}`;
+        if (e.isDirectory) await walk(child);
+        else if (e.isFile) {
+          const info = await tfs.stat(await dataPath(child)).catch(() => null);
+          out.push({ path: child, modified: info?.mtime ? new Date(info.mtime).getTime() : 0 });
+        }
+      }
+    };
+    await walk(prefix);
+    return out;
+  },
+};
+
+let database = null;
+function idb() {
+  database ??= new Promise((resolve, reject) => {
+    const request = indexedDB.open('rigby2d', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('files');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  return database;
+}
+async function idbRequest(mode, fn) {
+  const db = await idb();
+  return new Promise((resolve, reject) => {
+    const t = db.transaction('files', mode);
+    const request = fn(t.objectStore('files'));
+    t.oncomplete = () => resolve(request?.result);
+    t.onerror = () => reject(t.error);
+  });
+}
+/** Keys of `rel` and of everything below it. */
+const below = (rel) => IDBKeyRange.bound(`${rel}/`, `${rel}/￿`);
+
+const browserStore = {
+  location: async () => 'browser storage',
+  put: (rel, bytes) => idbRequest('readwrite', (s) => s.put({ bytes, modified: Date.now() }, rel)),
+  get: async (rel) => (await idbRequest('readonly', (s) => s.get(rel)).catch(() => null))?.bytes ?? null,
+  remove: (rel) =>
+    idbRequest('readwrite', (s) => {
+      s.delete(below(rel));
+      return s.delete(rel);
+    }).catch(() => {}),
+  async list(prefix) {
+    const out = [];
+    await idbRequest('readonly', (s) => {
+      const request = s.openCursor(below(prefix));
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        out.push({ path: cursor.key, modified: cursor.value.modified ?? 0 });
+        cursor.continue();
+      };
+      return request;
+    }).catch(() => {});
+    return out;
+  },
+};
+
+/** The editor's own data store (see above), with text helpers. */
+export const userStore = {
+  ...(isDesktop ? desktopStore : browserStore),
+  putText(rel, text) {
+    return this.put(rel, encoder.encode(text));
+  },
+  async getText(rel) {
+    const bytes = await this.get(rel);
+    return bytes ? decoder.decode(bytes) : null;
+  },
+};
+
+/** A read-only file system over userStore, so work files in it open like any other. */
+export const userStoreFs = {
+  readFile: async (p) => {
+    const bytes = await userStore.get(p);
+    if (!bytes) throw new Error(`file not found: ${p}`);
+    return bytes;
+  },
+  readText: async (p) => decoder.decode(await userStoreFs.readFile(p)),
+  writeFile: (p, bytes) => userStore.put(p, bytes),
+  writeText: (p, text) => userStore.putText(p, text),
+  mkdir: async () => {},
+  list: async () => [],
+  finish: async () => {},
+  reusable: false,
+};
+
+// ---- public API -------------------------------------------------------------------------------
+
+/** Opens an https link in the browser (the system browser on desktop, a new tab on the web). */
+export async function openExternal(url) {
+  if (isDesktop) await openUrl(url);
+  else window.open(url, '_blank', 'noopener');
+}
+
+/** Shows a saved file (or folder) in the system file manager. Desktop only; false on the web. */
+export async function revealPath(path) {
+  if (!isDesktop) return false;
+  await revealItemInDir(path);
+  return true;
+}
+
+/** A project file at `path` on the desktop's disk (reopened from File ▸ Open recent), or null on the web. */
+export function desktopFile(path) {
+  return isDesktop ? { path, fs: desktopFs } : null;
+}
+
+export async function confirmDialog(message, title) {
+  return isDesktop ? ask(message, { title, kind: 'warning' }) : window.confirm(message);
+}
+
+/**
+ * Asks for a project to open (desktop: a file dialog; its images are read from next to it). Returns
+ * { path, fs } or null. The browser picks files with pickProjectFiles instead (App.openFiles).
+ */
+export async function pickProject() {
+  if (isDesktop) {
+    const backups = ['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((n) => `rigby${n}`);
+    const path = await open({
+      filters: [
+        { name: 'Rigby2D work file, skeleton (.json, .skel) or DragonBones (_ske.json)', extensions: ['rigby', 'json', 'skel'] },
+        { name: 'Rigby2D backup (.rigby1 … .rigby9)', extensions: backups },
+      ],
+    });
+    return path ? { path, fs: desktopFs } : null;
+  }
+  return null;
+}
+
+/** What the browser's Open picker offers: projects and the files that come with them. */
+const PROJECT_FILES = ['.rigby', ...'123456789'.split('').map((n) => `.rigby${n}`), '.json', '.skel', '.atlas', '.txt', '.png', '.jpg', '.jpeg', '.webp'].join(',');
+
+/**
+ * Browser: an ordinary file picker for a project and the files that come with it (its images,
+ * atlas, DragonBones _tex.json), several at once. Resolves with the files (empty if cancelled).
+ */
+export function pickProjectFiles() {
+  return pickWithInput({ accept: PROJECT_FILES, multiple: true });
+}
+
+/**
+ * Asks where to write `fileName` (plus sibling files). Desktop: a save dialog. Browser: a folder
+ * picker when supported, otherwise a download (`single`: the file itself, else `<stem>.zip`).
+ * `download`: in the browser, always download (a `<stem>.zip` of everything written), without
+ * the folder picker. Returns { path, fs }.
+ */
+export async function pickSaveTarget(fileName, filterName, extension, { single = false, download = false } = {}) {
+  if (isDesktop) {
+    const path = await save({ filters: [{ name: filterName, extensions: [extension] }], defaultPath: fileName });
+    return path ? { path, fs: desktopFs } : null;
+  }
+  if (typeof window.showDirectoryPicker === 'function' && !download) {
+    try {
+      const dir = await window.showDirectoryPicker({ mode: 'readwrite' });
+      return { path: fileName, fs: directoryFs(dir) };
+    } catch (e) {
+      if (e.name === 'AbortError') return null;
+      throw e;
+    }
+  }
+  return { path: fileName, fs: single ? singleFileFs(fileName) : zipFs(fileName.replace(/\.[^.]+$/, '') + '.zip') };
+}
+
+/**
+ * Downloads `url` (a Rigby2D release file or a rigby2d.com file) as bytes. Desktop: through the
+ * app (no browser limits on cross-site downloads). Browser: fetch, which works for same-site files.
+ */
+export async function fetchBytes(url) {
+  const fetcher = isDesktop ? (await import('@tauri-apps/plugin-http')).fetch : globalThis.fetch;
+  const res = await fetcher(url);
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText || ''} for ${url}`.trim());
+  return new Uint8Array(await res.arrayBuffer());
+}
+
+/**
+ * Saves a downloadable file. Desktop: downloads it and asks where to save it; returns the path, or
+ * null if cancelled. Browser: the browser downloads it; returns the file name.
+ */
+export async function saveDownload(url, fileName) {
+  if (!isDesktop) {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.rel = 'noopener';
+    a.click();
+    return fileName;
+  }
+  const ext = fileName.split('.').pop();
+  const target = await save({ filters: [{ name: fileName, extensions: [ext] }], defaultPath: fileName });
+  if (!target) return null;
+  await tfs.writeFile(target, await fetchBytes(url));
+  return target;
+}
+
+/** Asks for a folder (desktop). Returns its path, or null. */
+export async function pickFolder(title) {
+  if (!isDesktop) return null;
+  const path = await open({ directory: true, title });
+  return typeof path === 'string' ? path : null;
+}
+
+/** Writes files [{ path, bytes }] under the folder `dir` (desktop), creating subfolders. */
+export async function writeFilesTo(dir, files) {
+  const sep = dir.includes('\\') ? '\\' : '/';
+  for (const f of files) {
+    const target = `${dir.replace(/[\\/]$/, '')}${sep}${f.path.split('/').join(sep)}`;
+    await tfs.mkdir(target.replace(/[\\/][^\\/]*$/, ''), { recursive: true });
+    await tfs.writeFile(target, f.bytes);
+  }
+}
+
+/** Asks for files to import. Returns [{ name, bytes }] (empty if cancelled). */
+export async function pickImportFiles(filterName, extensions, multiple) {
+  if (isDesktop) {
+    const picked = await open({ multiple, filters: [{ name: filterName, extensions }] });
+    const paths = Array.isArray(picked) ? picked : picked ? [picked] : [];
+    return Promise.all(paths.map(async (path) => ({ name: path, bytes: await tfs.readFile(path) })));
+  }
+  const files = await pickWithInput({ accept: extensions.map((e) => `.${e}`).join(','), multiple });
+  return Promise.all(files.map(async (f) => ({ name: f.name, bytes: new Uint8Array(await f.arrayBuffer()) })));
+}
+
+
+/** Desktop: the file the app was started with (a command-line argument or a double-clicked .rigby), or null. */
+export async function launchFile() {
+  if (!isDesktop) return null;
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke('launch_file').catch(() => null);
+}
+
+/**
+ * Desktop: files dragged onto the window. `hover(on)` follows a drag over it; `drop(paths)` gets the
+ * dropped files' paths.
+ */
+export async function onFileDrop({ hover, drop }) {
+  if (!isDesktop) return;
+  const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+  await getCurrentWebview().onDragDropEvent(({ payload }) => {
+    if (payload.type === 'enter' || payload.type === 'over') hover(true);
+    else if (payload.type === 'leave') hover(false);
+    else if (payload.type === 'drop') {
+      hover(false);
+      if (payload.paths?.length) drop(payload.paths);
+    }
+  });
+}

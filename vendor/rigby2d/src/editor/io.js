@@ -1,0 +1,587 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Project files, art import (PSD / SVG / PNG) and game export (JSON + packed atlas).
+// File access goes through a platform file system (see platform.js); PNG coding uses canvas.
+
+
+import { atlasFilter, parseAtlas, regionPlacement, textureFilterOf, writeAtlas } from '../core/atlas.js';
+import { readSkeletonBinary, writeSkeletonBinary } from '../core/binary.js';
+import { isSkeletonJson, readSkeletonJson, writeSkeletonJson } from '../core/interop.js';
+
+import { transform } from '../core/math.js';
+import { writeSceneManifest } from '../core/scene.js';
+import { Pose } from '../core/pose.js';
+import { sequenceFrameName } from '../core/sequence.js';
+import { Skeleton, makeAttachment, makeSlot, uniqueName } from '../core/model.js';
+import { pack } from './pack.js';
+import { unzip, zip } from './zip.js';
+import { dragonBonesToSkeleton, isDragonBones, isDragonBonesAtlas } from './dragonbones.js';
+import { alphaBounds, backToFront, isLayerSet, layerCenter, layerName } from './pngset.js';
+
+const IMAGE_DIR = 'images';
+
+// ---- paths ------------------------------------------------------------------------------------
+
+const SEP = /[\\/]/;
+
+export function dirname(path) {
+  const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+  return i < 0 ? '.' : path.slice(0, i) || path.slice(0, 1);
+}
+
+export function basename(path) {
+  return path.split(SEP).pop();
+}
+
+export function stem(path) {
+  const base = basename(path);
+  const dot = base.lastIndexOf('.');
+  return dot > 0 ? base.slice(0, dot) : base;
+}
+
+export function withExtension(path, ext) {
+  const dir = dirname(path);
+  const name = `${stem(path)}.${ext}`;
+  return dir === '.' && !SEP.test(path) ? name : joinPath(dir, name);
+}
+
+export function joinPath(dir, rel) {
+  const sep = dir.includes('\\') ? '\\' : '/';
+  const parts = rel.split(SEP).filter(Boolean);
+  return [dir.replace(/[\\/]+$/, ''), ...parts].join(sep);
+}
+
+// ---- PNG coding -------------------------------------------------------------------------------
+
+export async function decodeImage(bytes) {
+  const bitmap = await createImageBitmap(new Blob([bytes]), { premultiplyAlpha: 'none', colorSpaceConversion: 'none' });
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext('2d').drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return canvas;
+}
+
+export async function encodePng(canvas) {
+  const blob = await new Promise((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('PNG encoding failed'))), 'image/png'),
+  );
+  return new Uint8Array(await blob.arrayBuffer());
+}
+
+async function loadImage(fs, path) {
+  return decodeImage(await fs.readFile(path));
+}
+
+// ---- projects ---------------------------------------------------------------------------------
+
+/** Work-file extension (like .blend): the editor's own single-file format. */
+export const WORKFILE_EXT = 'rigby';
+
+/**
+ * Opens a `.rigby` work file, or imports a skeleton (.json or binary .skel, with its .atlas or loose
+ * images from the skeleton's images folder). Returns { doc, warnings, imported }.
+ */
+/**
+ * Whether a picked file is a project to open, and how good a pick it is: `rank` 0 (a work file),
+ * 1 (binary skeleton), 2 (DragonBones skeleton), 3 (skeleton JSON), 4 (a work file backup). Null for
+ * the files that come with a project (images, atlases, a DragonBones texture atlas, other JSON).
+ * `text` is the file's text, needed for .json only.
+ */
+export function projectKind(name, text = null) {
+  if (/\.rigby$/i.test(name)) return { rank: 0, kind: 'Rigby2D work file' };
+  if (/\.skel$/i.test(name)) return { rank: 1, kind: 'binary skeleton' };
+  if (/\.rigby\d$/i.test(name)) return { rank: 4, kind: 'Rigby2D backup' };
+  if (!/\.json$/i.test(name) || text === null) return null;
+  let obj;
+  try {
+    obj = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (isDragonBones(obj)) return { rank: 2, kind: 'DragonBones skeleton' };
+  if (isSkeletonJson(obj)) return { rank: 3, kind: 'skeleton JSON' };
+  return null;
+}
+
+/** Whether JSON text is a DragonBones texture atlas (the _tex.json that comes with a _ske.json). */
+export function isDragonBonesAtlasText(text) {
+  try {
+    return isDragonBonesAtlas(JSON.parse(text));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The files an opened project still needs, from its import warnings: image and atlas page names,
+ * and whether the DragonBones texture atlas was missing.
+ */
+export function missingFiles(warnings) {
+  const images = [];
+  const pages = [];
+  let dragonBonesAtlas = false;
+  for (const w of warnings) {
+    const image = /^image '(.+)' (?:not found|is missing)$/.exec(w);
+    const page = /^atlas page (\S+):/.exec(w);
+    if (image) images.push(image[1]);
+    else if (page) pages.push(page[1]);
+    else if (/no DragonBones texture atlas/.test(w)) dragonBonesAtlas = true;
+  }
+  // A missing atlas page holds the images: ask for the page, not each image in it.
+  return { names: pages.length ? pages : images, dragonBonesAtlas };
+}
+
+export async function openProject(path, fs, images) {
+  // Numbered backups (walk.rigby1, see recovery.js) are work files too.
+  if (/\.rigby\d?$/i.test(path)) return { ...(await openWorkfile(path, fs, images)), imported: false };
+  if (path.toLowerCase().endsWith('.skel')) {
+    const obj = readSkeletonBinary(await fs.readFile(path));
+    return { ...(await openSkeletonJson(path, fs, obj, images)), imported: true };
+  }
+  const json = await fs.readText(path).catch((e) => {
+    throw new Error(`reading ${path}: ${e}`);
+  });
+  let parsed;
+  try {
+    parsed = JSON.parse(json);
+  } catch (e) {
+    throw new Error(`invalid JSON: ${e.message}`);
+  }
+  if (isDragonBones(parsed)) return { ...(await openDragonBones(path, fs, parsed, images)), imported: true };
+  if (isDragonBonesAtlas(parsed)) throw new Error('this is a DragonBones texture atlas: open the skeleton (_ske.json) next to it');
+  if (!isSkeletonJson(parsed)) throw new Error('not a skeleton JSON file');
+  return { ...(await openSkeletonJson(path, fs, parsed, images)), imported: true };
+}
+
+/**
+ * `.rigby` work file: a ZIP holding `project.json` (the complete editor document) and every image
+ * as `images/<name>.png`. It keeps everything, including data the export formats cannot hold.
+ */
+/** `extra`: more files to store, [{ path, bytes }] (sounds as audio/<name>); `backups`: see platform.js writeFileSafe. */
+export async function saveWorkfile(path, fs, doc, images, extra = [], { backups = 0 } = {}) {
+  const enc = new TextEncoder();
+  const entries = [{ path: 'project.json', bytes: enc.encode(doc.toJson()) }, ...extra];
+  const warnings = [];
+  for (const name of new Set([...usedImages(doc), ...doc.images.map((i) => i.name)])) {
+    const canvas = images.get(name);
+    if (canvas) entries.push({ path: `images/${name}.png`, bytes: await encodePng(canvas) });
+    else warnings.push(`image '${name}' is missing`);
+  }
+  // A file system that can replace files safely (the desktop's) keeps `backups` previous versions.
+  const bytes = zip(entries);
+  await (fs.writeFileSafe ? fs.writeFileSafe(path, bytes, { backups }) : fs.writeFile(path, bytes)).catch((e) => {
+    throw new Error(`writing ${path}: ${e}`);
+  });
+  return { warnings };
+}
+
+async function openWorkfile(path, fs, images) {
+  const files = unzip(await fs.readFile(path));
+  const project = files.get('project.json');
+  if (!project) throw new Error('not a Rigby2D work file (project.json missing)');
+  const doc = Skeleton.fromJson(new TextDecoder().decode(project));
+  const warnings = [];
+  const loaded = new Map();
+  for (const [entry, bytes] of files) {
+    if (!entry.startsWith('images/') || !entry.endsWith('.png')) continue;
+    try {
+      loaded.set(entry.slice('images/'.length, -'.png'.length), await decodeImage(bytes));
+    } catch (e) {
+      warnings.push(`${entry}: ${e}`);
+    }
+  }
+  images.clear();
+  for (const [name, canvas] of loaded) images.insert(name, canvas);
+  for (const name of usedImages(doc)) if (!loaded.has(name)) warnings.push(`image '${name}' is missing`);
+  const audio = new Map([...files].filter(([k]) => k.startsWith('audio/')).map(([k, bytes]) => [k.slice('audio/'.length), bytes]));
+  // A scene's actors: the characters' own work files, stored under actors/<id>/ (see actors.js).
+  const actorFiles = new Map([...files].filter(([k]) => k.startsWith('actors/')));
+  return { doc, warnings, audio, actorFiles };
+}
+
+/** Every image referenced by an attachment in any skin. */
+export function usedImages(doc) {
+  const names = new Set();
+  const visit = (a) => {
+    if (a.type === 'region' || a.type === 'mesh' || a.type === 'linkedmesh' || a.type === undefined) {
+      if (a.sequence) for (let i = 0; i < (a.sequence.count ?? 1); i++) names.add(sequenceFrameName(a, i));
+      else names.add(a.image);
+    }
+  };
+  for (const s of doc.slots) s.attachments.forEach(visit);
+  for (const skin of doc.skins) for (const e of skin.slots) e.attachments.forEach(visit);
+  return [...names].sort();
+}
+
+/** Converts premultiplied-alpha pixels to straight alpha in place. */
+function unpremultiply(canvas) {
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const a = d[i + 3];
+    if (a > 0 && a < 255) {
+      d[i] = Math.min(255, (d[i] * 255) / a);
+      d[i + 1] = Math.min(255, (d[i + 1] * 255) / a);
+      d[i + 2] = Math.min(255, (d[i + 2] * 255) / a);
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+}
+
+/** Cuts a region out of an atlas page into an upright canvas of the region's original size. */
+function extractRegion(page, region) {
+  const p = regionPlacement(region);
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, p.originalWidth);
+  canvas.height = Math.max(1, p.originalHeight);
+  const ctx = canvas.getContext('2d');
+  ctx.translate(p.dst.x + p.dst.width / 2, p.dst.y + p.dst.height / 2);
+  // Stored rotated counter-clockwise: rotate back clockwise (positive angles in canvas space).
+  ctx.rotate((p.rotate * Math.PI) / 180);
+  ctx.drawImage(page, p.src.x, p.src.y, p.src.width, p.src.height, -p.src.width / 2, -p.src.height / 2, p.src.width, p.src.height);
+  return canvas;
+}
+
+async function tryReadText(fs, path) {
+  try {
+    return await fs.readText(path);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Finds the texture atlas for a skeleton: one with the same name, otherwise the `.atlas` file in
+ * the same folder whose regions cover the most of the skeleton's images. Returns its text or null.
+ */
+async function findAtlas(path, fs, doc) {
+  const same = (await tryReadText(fs, withExtension(path, 'atlas'))) ?? (await tryReadText(fs, `${withExtension(path, 'atlas')}.txt`));
+  if (same !== null) return same;
+  const dir = dirname(path);
+  const names = ((await fs.list?.(dir)) ?? []).filter((n) => /.atlas(.txt)?$/i.test(n)).sort();
+  const wanted = new Set(usedImages(doc));
+  let best = null;
+  let bestScore = 0;
+  for (const name of names) {
+    const text = await tryReadText(fs, joinPath(dir, name));
+    if (text === null) continue;
+    let score = 0;
+    for (const page of parseAtlas(text).pages) for (const r of page.regions) if (wanted.has(r.name)) score++;
+    // Prefer straight-alpha atlases over premultiplied ones when both cover the same images.
+    if (score > bestScore || (score === bestScore && best?.pma && !/pma/i.test(name))) {
+      best = { text, pma: /pma/i.test(name) };
+      bestScore = score;
+    }
+  }
+  return best ? best.text : null;
+}
+
+/** Opens skeleton JSON: reads the JSON, then images from a sibling atlas or the images folder. */
+/**
+ * A DragonBones project: `<name>_ske.json` with `<name>_tex.json` and its image next to it. It is
+ * converted to skeleton JSON and an atlas (dragonbones.js), then imported like any skeleton.
+ */
+async function openDragonBones(path, fs, ske, images) {
+  const dir = dirname(path);
+  const candidates = [path.replace(/_ske\.json$/i, '_tex.json'), joinPath(dir, `${ske.name ?? stem(path)}_tex.json`)];
+  for (const name of (await fs.list?.(dir)) ?? []) if (/_tex\.json$/i.test(name)) candidates.push(joinPath(dir, name));
+  let tex = null;
+  for (const c of candidates) {
+    const text = await tryReadText(fs, c);
+    if (text === null) continue;
+    try {
+      const parsed = JSON.parse(text);
+      if (isDragonBonesAtlas(parsed)) {
+        tex = parsed;
+        break;
+      }
+    } catch {
+      // not the atlas
+    }
+  }
+  const { json, atlas, warnings } = dragonBonesToSkeleton(ske, tex);
+  if (!tex) warnings.push('no DragonBones texture atlas (_tex.json) found next to the skeleton: images are looked up by name instead');
+  // The converted atlas stands in for an .atlas file next to the skeleton.
+  const atlasPath = withExtension(path, 'atlas');
+  const overlay = { ...fs, readText: (p) => (atlas !== null && p === atlasPath ? Promise.resolve(atlas) : fs.readText(p)) };
+  const opened = await openSkeletonJson(path, overlay, json, images);
+  opened.doc.name = stem(path).replace(/_ske$/i, '');
+  return { doc: opened.doc, warnings: [...warnings, ...opened.warnings] };
+}
+
+async function openSkeletonJson(path, fs, obj, images) {
+  const { skeleton: doc, warnings } = readSkeletonJson(obj, stem(path));
+  const dir = dirname(path);
+  const loaded = new Map();
+  const atlasText = await findAtlas(path, fs, doc);
+  if (atlasText !== null) {
+    const { pages } = parseAtlas(atlasText);
+    // A pixel-art (Nearest) atlas stays sharp in the editor and is exported as Nearest again.
+    doc.textureFilter = textureFilterOf(pages);
+    for (const page of pages) {
+      let sheet;
+      try {
+        sheet = await loadImage(fs, joinPath(dir, page.name));
+      } catch (e) {
+        warnings.push(`atlas page ${page.name}: ${e}`);
+        continue;
+      }
+      if (page.pma) unpremultiply(sheet);
+      for (const r of page.regions) loaded.set(r.index >= 0 ? `${r.name}${r.index}` : r.name, extractRegion(sheet, r));
+    }
+  }
+  const folder = joinPath(dir, (obj.skeleton.images ?? '').trim() || 'images');
+  for (const name of usedImages(doc)) {
+    if (loaded.has(name)) continue;
+    let found = false;
+    for (const base of [folder, dir]) {
+      for (const ext of ['png', 'jpg', 'jpeg']) {
+        try {
+          loaded.set(name, await loadImage(fs, joinPath(base, `${name}.${ext}`)));
+          found = true;
+          break;
+        } catch {
+          // try the next location
+        }
+      }
+      if (found) break;
+    }
+    if (!found) warnings.push(`image '${name}' not found`);
+  }
+  images.clear();
+  doc.images = [];
+  for (const [name, canvas] of loaded) {
+    images.insert(name, canvas);
+    doc.images.push({ name, path: null, width: canvas.width, height: canvas.height });
+  }
+  return { doc, warnings };
+}
+
+/** Packs the images used by `doc` into one sheet. Returns { sheet, width, height, regions }. */
+function packSheet(doc, images) {
+  const items = usedImages(doc).map((name) => {
+    const canvas = images.get(name);
+    if (!canvas) throw new Error(`image '${name}' is missing`);
+    return { name, width: canvas.width, height: canvas.height, canvas };
+  });
+  const { width, height, regions } = pack(items);
+  const sheet = document.createElement('canvas');
+  sheet.width = width;
+  sheet.height = height;
+  const ctx = sheet.getContext('2d');
+  for (const r of regions) ctx.drawImage(items.find((i) => i.name === r.name).canvas, r.x, r.y);
+  return { sheet, width, height, regions };
+}
+
+/**
+ * Exports skeleton JSON: `<name>.json` (version "3.8" or "4.2"), `<name>.atlas` and
+ * `<name>.png`. Returns { atlasPath, warnings }.
+ */
+export async function exportSkeletonJson(path, fs, doc, images, version) {
+  const { json, warnings } = writeSkeletonJson(doc, { version });
+  const atlasPath = await writePackedAtlas(path, fs, doc, images);
+  await fs.writeText(path, JSON.stringify(json, null, 2));
+  return { atlasPath, warnings };
+}
+
+/** Exports a binary skeleton: `<name>.skel` (format 4.3), `<name>.atlas` and `<name>.png`. */
+export async function exportSkeletonBinary(path, fs, doc, images) {
+  const { json, warnings } = writeSkeletonJson(doc, { version: '4.3', binary: true });
+  const bytes = writeSkeletonBinary(json);
+  const atlasPath = await writePackedAtlas(path, fs, doc, images);
+  await fs.writeFile(path, bytes);
+  return { atlasPath, warnings };
+}
+
+/**
+ * Exports a scene for runtimes: `<name>.scene.json` (the manifest, see core/scene.js), the stage as
+ * `<name>.json` and each character as `<name>.<actor id>.json`, every skeleton (format 4.3) with its
+ * own `.atlas` and `.png`. `actorDocs` lists { id, doc, images } for the characters the scene uses.
+ * Returns { files, warnings }.
+ */
+export async function exportScene(path, fs, doc, images, actorDocs) {
+  const base = path.replace(/(\.scene)?\.json$/i, '');
+  const files = [];
+  const warnings = [];
+  const write = async (file, sk, imgs, label) => {
+    const { json, warnings: w } = writeSkeletonJson(sk, { version: '4.3' });
+    warnings.push(...w.map((x) => `${label}: ${x}`));
+    if (usedImages(sk).length) files.push(await writePackedAtlas(file, fs, sk, imgs));
+    await fs.writeText(file, JSON.stringify(json, null, 2));
+    files.push(file);
+  };
+  await write(`${base}.json`, doc, images, 'stage');
+  const actorFiles = new Map();
+  for (const { id, doc: actorDoc, images: actorImages } of actorDocs) {
+    if (actorFiles.has(id)) continue;
+    actorFiles.set(id, `${basename(base)}.${id}.json`);
+    await write(`${base}.${id}.json`, actorDoc, actorImages, id);
+  }
+  const missing = (doc.scene?.actors ?? []).filter((a) => !actorFiles.has(a.id));
+  if (missing.length) warnings.push(`no character loaded for ${missing.map((a) => a.name).join(', ')}`);
+  const manifest = writeSceneManifest(doc.scene, basename(`${base}.json`), actorFiles);
+  await fs.writeText(`${base}.scene.json`, JSON.stringify(manifest, null, 2));
+  files.unshift(`${base}.scene.json`);
+  return { files, warnings };
+}
+
+/** Packs the used images into `<name>.png` and writes `<name>.atlas`. Returns the atlas path. */
+async function writePackedAtlas(path, fs, doc, images) {
+  const { sheet, width, height, regions } = packSheet(doc, images);
+  const pngPath = withExtension(path, 'png');
+  const atlasPath = withExtension(path, 'atlas');
+  const page = { name: basename(pngPath), width, height, filter: atlasFilter(doc.textureFilter), regions: regions.map((r) => ({ ...r, rotate: 0, index: -1 })) };
+  await fs.writeFile(pngPath, await encodePng(sheet));
+  await fs.writeText(atlasPath, writeAtlas([page]));
+  return atlasPath;
+}
+
+// ---- import -----------------------------------------------------------------------------------
+
+function uniqueImageName(doc, images, base) {
+  base = base.trim() || 'image';
+  return uniqueName(base, (n) => images.contains(n) || doc.images.some((i) => i.name === n));
+}
+
+/** Adds an image and a slot showing it on `bone`, placed at `world` position in the setup pose. */
+function addImageSlot(doc, images, base, canvas, bone, world, visible) {
+  const name = uniqueImageName(doc, images, base);
+  const { width: w, height: h } = canvas;
+  images.insert(name, canvas);
+  doc.images.push({ name, path: null, width: w, height: h });
+  const setup = new Pose(doc);
+  const local = setup.world[bone].inverse().apply(world);
+  const att = makeAttachment(name, name, transform(local[0], local[1], 0), w, h);
+  const slot = makeSlot(doc.uniqueSlotName(name), bone, att);
+  if (!visible) slot.attachment = null;
+  doc.slots.push(slot);
+}
+
+/** Flattens PSD layer groups into pixel layers, bottom-most first. */
+function pixelLayers(children, parentHidden = false, out = []) {
+  for (const layer of children ?? []) {
+    const hidden = parentHidden || !!layer.hidden;
+    if (layer.children) pixelLayers(layer.children, hidden, out);
+    else if (layer.canvas) out.push({ layer, hidden });
+  }
+  return out;
+}
+
+/**
+ * Imports every pixel layer of a PSD as an image + slot on the root bone, keeping layout.
+ * The canvas' bottom-center becomes the origin. Returns the number of layers imported.
+ */
+/** `file` is { name, bytes }. */
+export async function importPsd(file, doc, images) {
+  const { bytes } = file;
+  // Loaded on demand: the PSD reader is large and only needed here.
+  const { readPsd } = await import('ag-psd');
+  const psd = readPsd(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), {
+    skipCompositeImageData: true,
+    skipThumbnail: true,
+  });
+  const cw = psd.width;
+  const ch = psd.height;
+  let count = 0;
+  // ag-psd lists layers bottom-most first, which matches slot draw order (back to front).
+  for (const { layer, hidden } of pixelLayers(psd.children)) {
+    const left = layer.left ?? 0;
+    const top = layer.top ?? 0;
+    const l = Math.max(0, left);
+    const t = Math.max(0, top);
+    const r = Math.max(0, Math.min(cw, layer.right ?? left + layer.canvas.width));
+    const b = Math.max(0, Math.min(ch, layer.bottom ?? top + layer.canvas.height));
+    if (r <= l || b <= t) continue;
+    const crop = document.createElement('canvas');
+    crop.width = r - l;
+    crop.height = b - t;
+    const ctx = crop.getContext('2d');
+    ctx.globalAlpha = layer.opacity ?? 1;
+    ctx.drawImage(layer.canvas, left - l, top - t);
+    const cx = (l + r) * 0.5 - cw * 0.5;
+    const cy = ch - (t + b) * 0.5;
+    addImageSlot(doc, images, layer.name ?? 'layer', crop, 0, [cx, cy], !hidden);
+    count++;
+  }
+  if (count === 0) throw new Error('no pixel layers found');
+  if (doc.name === 'untitled') doc.name = stem(file.name);
+  return count;
+}
+
+/** The largest side an imported SVG is drawn at (canvas limits, and memory for many layers). */
+export const SVG_MAX_SIDE = 8192;
+
+/**
+ * Imports an SVG drawing (`file` is { name, bytes }) like a PSD: every layer (Inkscape layers, or the
+ * groups Affinity and others export) is drawn at `scale` (1 = the drawing's own pixel size), cropped
+ * to what it shows and placed where it was drawn, on `bone`, back to front, ready for AutoRig.
+ * Anything outside the layers comes in as one more part, at the back. Returns the number of parts.
+ */
+export async function importSvg(file, bone, doc, images, { scale = 1 } = {}) {
+  const { parseSvg, drawLayer } = await import('./svgimport.js');
+  const parsed = parseSvg(new TextDecoder().decode(file.bytes));
+  const { size } = parsed;
+  const k = Math.min(scale, SVG_MAX_SIDE / Math.max(size.width, size.height));
+  const cw = Math.max(1, Math.round(size.width * k));
+  const ch = Math.max(1, Math.round(size.height * k));
+  let count = 0;
+  const place = (canvas, name, visible) => {
+    const bounds = alphaBounds(canvas.getContext('2d').getImageData(0, 0, cw, ch).data, cw, ch);
+    if (!bounds) return; // nothing drawn
+    const crop = document.createElement('canvas');
+    crop.width = bounds.width;
+    crop.height = bounds.height;
+    crop.getContext('2d').drawImage(canvas, bounds.x, bounds.y, bounds.width, bounds.height, 0, 0, bounds.width, bounds.height);
+    addImageSlot(doc, images, name, crop, bone, layerCenter(bounds, cw, ch), visible);
+    count++;
+  };
+  // Drawn one at a time, so only one full-size canvas is alive at once.
+  place(await drawLayer(parsed, null, cw, ch, size.viewBox), 'background', true);
+  for (const layer of parsed.layers) place(await drawLayer(parsed, layer, cw, ch, size.viewBox), layer.name, !layer.hidden);
+  if (count === 0) throw new Error('nothing is drawn in this SVG');
+  if (doc.name === 'untitled') doc.name = stem(file.name);
+  return count;
+}
+
+/**
+ * Imports PNG files ([{ name, bytes }]) as slots on `bone`. Files that all share one size are layers
+ * exported from a drawing (pngset.js): each is cropped to its visible pixels and placed where it was
+ * drawn, like a PSD, ready for AutoRig. Other files are laid out side by side above the origin.
+ * Returns the number of images imported.
+ */
+export async function importPngs(files, bone, doc, images) {
+  const canvases = [];
+  for (const { name, bytes } of files) {
+    canvases.push(
+      await decodeImage(bytes).catch((e) => {
+        throw new Error(`loading ${name}: ${e}`);
+      }),
+    );
+  }
+  if (isLayerSet(canvases)) {
+    const { width: cw, height: ch } = canvases[0];
+    let count = 0;
+    for (const i of backToFront(files.map((f) => f.name))) {
+      const canvas = canvases[i];
+      const bounds = alphaBounds(canvas.getContext('2d').getImageData(0, 0, cw, ch).data, cw, ch);
+      if (!bounds) continue; // an empty layer
+      const crop = document.createElement('canvas');
+      crop.width = bounds.width;
+      crop.height = bounds.height;
+      crop.getContext('2d').drawImage(canvas, bounds.x, bounds.y, bounds.width, bounds.height, 0, 0, bounds.width, bounds.height);
+      addImageSlot(doc, images, layerName(files[i].name), crop, bone, layerCenter(bounds, cw, ch), true);
+      count++;
+    }
+    return count;
+  }
+  let x = 0;
+  canvases.forEach((canvas, i) => {
+    const { width: w, height: h } = canvas;
+    addImageSlot(doc, images, stem(files[i].name), canvas, bone, [x + w * 0.5, h * 0.5], true);
+    x += w + 10;
+  });
+  return files.length;
+}
+

@@ -1,0 +1,20 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://demo/main.gd" id="1"]
+
+[node name="Main" type="Node2D"]
+script = ExtResource("1")
+
+[node name="Rigbytron" type="RigbySkeleton2D" parent="."]
+position = Vector2(480, 560)
+scale = Vector2(0.38, 0.38)
+skeleton_file = "res://demo/rigbytron/rigbytron.skel"
+atlas_file = "res://demo/rigbytron/rigbytron.atlas"
+animation = "hold"
+
+[node name="Hint" type="Label" parent="."]
+offset_left = 16.0
+offset_top = 12.0
+offset_right = 600.0
+offset_bottom = 40.0
+text = "Space: slash   S: show bones"

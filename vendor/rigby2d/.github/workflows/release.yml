@@ -1,0 +1,266 @@
+# Builds the release files from the repository on GitHub's machines (Windows, Linux and macOS), so
+# every released file can be traced to this source, and signs the Windows files when signing is set up:
+#   - Repository variables SIGNPATH_ORGANIZATION_ID and SIGNPATH_PROJECT_SLUG, and the secret
+#     SIGNPATH_API_TOKEN, turn signing on. Without them the files are built unsigned.
+#   - Each signing request waits for a manual approval in SignPath (its policy for open source).
+# Run it from the Actions tab (Run workflow) or by pushing a tag such as v0.3.1. The files are
+# attached to the run as artifacts; publishing the GitHub release stays a deliberate, manual step.
+name: Release build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            runtimes/rust
+
+      - id: version
+        shell: bash
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - run: npm ci
+      - run: npm test
+
+      # Editor: MSI and NSIS installers, and the program itself as the portable editor. With the
+      # updater key (secret TAURI_SIGNING_PRIVATE_KEY) the setup program is signed for auto-update.
+      - name: Build the editor
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then npm run build -- --config '{"bundle":{"createUpdaterArtifacts":true}}'; else npm run build; fi
+      # AI assistant extension, and the Phaser runtime bundles.
+      - run: npm run build:mcpb
+      - run: npm run build:phaser
+      - run: npm run build:pixi
+      # The PixiJS runtime's optional WebAssembly core (the Rust runtime, rigby-wasm).
+      - name: Build the WebAssembly core
+        shell: bash
+        working-directory: runtimes/rust
+        env:
+          RUSTFLAGS: -C strip=symbols
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo build --release -p rigby-wasm --target wasm32-unknown-unknown
+      - run: npm run build:cocos
+      # Godot runtime: the GDExtension library and the addon and demo zips.
+      - run: cargo build --release -p rigby-godot
+        working-directory: runtimes/rust
+      - run: node runtimes/godot/package.mjs windows-x64
+      # Defold runtime: the library (a dependency zip; Defold's build server compiles the native
+      # extension) and the demo project.
+      - run: node runtimes/defold/package.mjs
+      # Unity runtime: the C# core against the JavaScript runtime (golden tests), then the package
+      # as a tarball for Unity's "Install package from tarball".
+      - run: node runtimes/unity/com.rigby2d.unity/Tests~/run.mjs
+      - name: Pack the Unity package
+        shell: bash
+        env:
+          V: ${{ steps.version.outputs.version }}
+        working-directory: runtimes/unity/com.rigby2d.unity
+        run: |
+          npm version "$V" --no-git-tag-version --allow-same-version
+          npm pack --pack-destination ../../..
+
+      - name: Collect the release files
+        shell: bash
+        env:
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p release
+          cp "src-tauri/target/release/bundle/msi/Rigby2D_${V}_x64_en-US.msi" release/
+          cp "src-tauri/target/release/bundle/nsis/Rigby2D_${V}_x64-setup.exe" release/
+          # Update signatures for both installers: an MSI install updates with the MSI, an NSIS
+          # install with the setup program (latest.json), so neither asks to uninstall the other.
+          for sig in "src-tauri/target/release/bundle/nsis/Rigby2D_${V}_x64-setup.exe.sig" "src-tauri/target/release/bundle/msi/Rigby2D_${V}_x64_en-US.msi.sig"; do
+            if [ -f "$sig" ]; then cp "$sig" release/; fi
+          done
+          cp src-tauri/target/release/rigby2d.exe "release/Rigby2D_${V}_x64_portable.exe"
+          cp "dist-mcpb/Rigby2D-AI-${V}.mcpb" release/
+          cp "runtimes/godot/dist/rigby2d-godot-addon-${V}-windows-x64.zip" release/
+          cp "runtimes/godot/dist/rigby2d-godot-demo-${V}-windows-x64.zip" release/
+          cp "com.rigby2d.unity-${V}.tgz" "release/rigby2d-unity-${V}.tgz"
+          cp runtimes/defold/dist/rigby2d-defold.zip "runtimes/defold/dist/rigby2d-defold-demo-${V}.zip" release/
+          cp dist-phaser/* release/
+          cp dist-pixi/* release/
+          cp runtimes/rust/target/wasm32-unknown-unknown/release/rigby_wasm.wasm "release/rigby2d-pixi-${V}.wasm"
+          cp dist-cocos/rigby2d-cocos-*.zip release/
+          ls -la release
+
+      - id: unsigned
+        uses: actions/upload-artifact@v7
+        with:
+          name: rigby2d-${{ steps.version.outputs.version }}-unsigned
+          path: release/
+          if-no-files-found: error
+
+  # Linux: the editor as an AppImage and a .deb, and the Godot runtime for Linux.
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            runtimes/rust
+      - name: System libraries for Tauri
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf file
+      - id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - run: npm ci
+      - name: Build the editor
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then npm run build -- --bundles appimage,deb --config '{"bundle":{"createUpdaterArtifacts":true}}'; else npm run build -- --bundles appimage,deb; fi
+      - run: cargo build --release -p rigby-godot
+        working-directory: runtimes/rust
+      - run: node runtimes/godot/package.mjs linux-x64
+      - name: Collect the release files
+        env:
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p release
+          cp src-tauri/target/release/bundle/appimage/*.AppImage "release/Rigby2D_${V}_amd64.AppImage"
+          for sig in src-tauri/target/release/bundle/appimage/*.AppImage.sig; do [ -f "$sig" ] && cp "$sig" "release/Rigby2D_${V}_amd64.AppImage.sig"; done
+          cp src-tauri/target/release/bundle/deb/*.deb "release/Rigby2D_${V}_amd64.deb"
+          cp "runtimes/godot/dist/rigby2d-godot-addon-${V}-linux-x64.zip" release/
+          cp "runtimes/godot/dist/rigby2d-godot-demo-${V}-linux-x64.zip" release/
+          ls -la release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rigby2d-${{ steps.version.outputs.version }}-linux
+          path: release/
+          if-no-files-found: error
+
+  # macOS: one universal editor (Apple silicon and Intel) as a .dmg, and the Godot runtime as a
+  # universal library. Not signed with an Apple Developer ID yet: see docs/installation.md.
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri
+            runtimes/rust
+      - id: version
+        run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+      - run: npm ci
+      - name: Build the editor
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -n "$TAURI_SIGNING_PRIVATE_KEY" ]; then npm run build -- --target universal-apple-darwin --bundles app,dmg --config '{"bundle":{"createUpdaterArtifacts":true}}'; else npm run build -- --target universal-apple-darwin --bundles dmg; fi
+      - name: Godot runtime (universal library)
+        working-directory: runtimes/rust
+        run: |
+          cargo build --release -p rigby-godot --target aarch64-apple-darwin
+          cargo build --release -p rigby-godot --target x86_64-apple-darwin
+          mkdir -p target/release
+          lipo -create -output target/release/librigby_godot.dylib target/aarch64-apple-darwin/release/librigby_godot.dylib target/x86_64-apple-darwin/release/librigby_godot.dylib
+      - run: node runtimes/godot/package.mjs macos
+      - name: Collect the release files
+        env:
+          V: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p release
+          cp src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg "release/Rigby2D_${V}_universal.dmg"
+          # The auto-update archive and its signature (when the updater key is set).
+          upd=src-tauri/target/universal-apple-darwin/release/bundle/macos/Rigby2D.app.tar.gz
+          if [ -f "$upd.sig" ]; then cp "$upd" "release/Rigby2D_${V}_universal.app.tar.gz"; cp "$upd.sig" "release/Rigby2D_${V}_universal.app.tar.gz.sig"; fi
+          cp "runtimes/godot/dist/rigby2d-godot-addon-${V}-macos.zip" release/
+          cp "runtimes/godot/dist/rigby2d-godot-demo-${V}-macos.zip" release/
+          ls -la release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rigby2d-${{ steps.version.outputs.version }}-macos
+          path: release/
+          if-no-files-found: error
+
+  # The auto-update manifest (latest.json) from the three builds' signed update files.
+  updater:
+    needs: [build, build-linux, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: rigby2d-${{ needs.build.outputs.version }}-*
+          path: release
+          merge-multiple: true
+      - run: node .github/scripts/updater-manifest.mjs release "${{ needs.build.outputs.version }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rigby2d-${{ needs.build.outputs.version }}-updater
+          path: release/latest.json
+          if-no-files-found: ignore
+
+  sign:
+    needs: build
+    runs-on: windows-latest
+    # Signing starts once SignPath is set up (see the top of this file).
+    if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
+    steps:
+      - name: Find the unsigned artifact
+        id: artifact
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NAME: rigby2d-${{ needs.build.outputs.version }}-unsigned
+        run: |
+          id=$(gh api "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts" --jq ".artifacts[] | select(.name == \"$NAME\") | .id")
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+      - uses: signpath/github-action-submit-signing-request@v2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: initial
+          github-artifact-id: ${{ steps.artifact.outputs.id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 86400
+          output-artifact-directory: signed
+      - uses: actions/upload-artifact@v7
+        with:
+          name: rigby2d-${{ needs.build.outputs.version }}-signed
+          path: signed/
+          if-no-files-found: error

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rigby2D</title>
+    <link rel="icon" type="image/svg+xml" href="/branding/rigby2d-icon-dark.svg" />
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #0a0a0b;
+        color: #a9adb5;
+        font: 11px system-ui, 'Segoe UI', sans-serif;
+        user-select: none;
+        cursor: default;
+      }
+      body {
+        background:
+          radial-gradient(60% 75% at 50% 52%, rgba(64, 140, 230, 0.16), transparent 70%),
+          radial-gradient(50% 40% at 70% 50%, rgba(123, 167, 199, 0.07), transparent 70%),
+          #0a0a0b;
+      }
+      #lockup {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 56%;
+        transform: translate(-46%, -50%);
+        opacity: 0;
+        clip-path: inset(0 100% 0 0);
+        filter: drop-shadow(0 0 18px rgba(80, 160, 255, 0.35));
+      }
+      #lockup.reveal {
+        transition:
+          clip-path 0.55s cubic-bezier(0.2, 0.7, 0.2, 1),
+          opacity 0.25s ease-out,
+          transform 0.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+        clip-path: inset(0 0 0 0);
+        opacity: 1;
+        transform: translate(-50%, -50%);
+      }
+      #note {
+        position: absolute;
+        right: 14px;
+        bottom: 10px;
+        letter-spacing: 0.04em;
+        transition: opacity 0.3s;
+      }
+      body.leaving {
+        transition: opacity 0.25s ease-in;
+        opacity: 0;
+      }
+    </style>
+  </head>
+  <body data-tauri-drag-region>
+    <img id="lockup" alt="Rigby2D" draggable="false" />
+    <div id="note">Loading…</div>
+    <script type="module" src="/src/splash/splash.js"></script>
+  </body>
+</html>

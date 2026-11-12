@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rigby2D: open-source 2D skeletal animation</title>
+    <meta name="description" content="Rig layered art in one step, animate for games and film, lip-sync dialogue from audio, compose scenes and play it anywhere. Free and open source, with a built-in MCP server for AI assistants." />
+    <meta name="theme-color" content="#0a0a0b" />
+    <meta property="og:title" content="Rigby2D: open-source 2D skeletal animation" />
+    <meta property="og:description" content="Rig layered art in one step, animate for games and film, lip-sync dialogue from audio and play it anywhere. Free and open source." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://rigby2d.com/" />
+    <meta property="og:image" content="https://rigby2d.com/og.jpg" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="icon" type="image/svg+xml" href="../branding/rigby2d-icon-dark.svg" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <!--site-header:-->
+
+    <main id="main">
+      <section class="hero">
+        <div class="wrap hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">Open source · <span data-version>public beta</span></p>
+            <h1>2D skeletal animation, <span class="accent">from layered art to any engine.</span></h1>
+            <p class="lede">
+              Rig a layered PSD or SVG in one step, animate it for games and film, make it talk with lip-sync from
+              audio, and play it anywhere with the included runtimes. AI assistants can inspect, rig and animate your projects through the
+              built-in MCP server.
+            </p>
+            <div class="cta">
+              <a class="btn primary" href="./editor/" data-goatcounter-click="site-open-editor-hero">Open the editor in your browser</a>
+              <a class="btn" href="#download" data-goatcounter-click="site-download-hero">Download for Windows, macOS, Linux</a>
+              <a class="btn discord" href="https://discord.gg/PGgaTwbNH" rel="noopener" data-goatcounter-click="site-community-hero"><svg class="discord-mark" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"/></svg>Join our Discord</a>
+            </div>
+            <p class="fine">Free · MIT or Apache-2.0 · No account, no install for the browser editor</p>
+          </div>
+
+          <figure class="stage" aria-label="NILA, the Rigby2D mascot, animated live">
+            <canvas id="hero" aria-hidden="true"></canvas>
+            <p class="stage-line" data-line aria-live="polite"></p>
+            <img class="stage-fallback" src="../branding/nila/thumbnail.png" alt="NILA, the Rigby2D mascot" hidden />
+            <figcaption>
+              <div class="stage-controls" role="group" aria-label="NILA's expressions">
+                <button type="button" data-anim="hello" aria-pressed="false">Hello</button>
+                <button type="button" data-anim="happy" aria-pressed="false">Happy</button>
+                <button type="button" data-anim="surprised" aria-pressed="false">Surprised</button>
+                <button type="button" data-anim="thinking" aria-pressed="false">Thinking</button>
+                <button type="button" data-anim="curious" aria-pressed="false">Curious</button>
+                <button type="button" data-anim="wink" aria-pressed="false">Wink</button>
+                <button type="button" data-anim="smooth" aria-pressed="false">Lip-sync</button>
+                <button type="button" data-anim="physics" aria-pressed="false">Physics</button>
+                <button type="button" data-anim="wave" aria-pressed="false">Wave</button>
+              </div>
+              <div class="stage-meta">
+                <button type="button" class="sound" data-sound aria-pressed="false">Sound off</button>
+                <span class="live"><i></i>Live: NILA on the Rigby2D runtime, in your browser <span data-cost></span></span>
+              </div>
+            </figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section class="strip" aria-label="At a glance">
+        <div class="wrap strip-row">
+          <div><i data-icon="wand-sparkles"></i><b>1 step</b><span>from layered PSD or SVG to an editable rig</span></div>
+          <div><i data-icon="gamepad-2"></i><b>8 runtimes</b><span>Godot, Unity, Defold, Cocos Creator, Phaser, PixiJS, JavaScript and Rust</span></div>
+          <div><i data-icon="file-check"></i><b>Lossless</b><span>skeleton JSON 3.8 / 4.2 / 4.3 and .skel</span></div>
+          <div><i data-icon="bot"></i><b>MCP built in</b><span>AI assistants work on real projects</span></div>
+        </div>
+      </section>
+
+      <section class="press" aria-labelledby="press-title">
+        <div class="wrap">
+          <p class="press-label" id="press-title">Featured in</p>
+          <div class="press-grid">
+            <a class="press-card" href="https://polydium.net/briefing/8df9db93-0abf-4032-bd88-acbdf95ec431" rel="noopener" data-goatcounter-click="site-press-polydium">
+              <span class="press-logo"><img src="./press/polydium.webp" alt="" width="40" height="40" /></span>
+              <span class="press-text"><b>Polydium</b><small>Pipeline Briefing · Korea</small></span>
+            </a>
+            <a class="press-card" href="https://trendshift.io/topics/game-engine" rel="noopener" data-goatcounter-click="site-press-trendshift">
+              <span class="press-logo"><img src="./press/trendshift.webp" alt="" width="40" height="40" /></span>
+              <span class="press-text"><b>Trendshift</b><small>Top game engine projects 2026</small></span>
+            </a>
+            <a class="press-card" href="https://alternativeto.net/software/rigby2d/about/" rel="noopener" data-goatcounter-click="site-press-alternativeto">
+              <span class="press-logo"><i data-mark="alternativeto"></i></span>
+              <span class="press-text"><b>AlternativeTo</b><small>Next to Spine and DragonBones</small></span>
+            </a>
+            <a class="press-card" href="https://portable-linux-apps.github.io/en/app/rigby2d.html" rel="noopener" data-goatcounter-click="site-press-portable-linux-apps">
+              <span class="press-logo"><i data-mark="linux"></i></span>
+              <span class="press-text"><b>Portable Linux Apps</b><small>AppImage catalog · AM</small></span>
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section id="dragonbones" class="section db-section" aria-labelledby="db-title">
+        <div class="wrap split db-split">
+          <div>
+            <p class="eyebrow">Coming from DragonBones?</p>
+            <h2 id="db-title">Your DragonBones characters, alive in Rigby2D</h2>
+            <p>
+              These are DragonBones' own demo characters. Their <code>_ske.json</code> files open straight in Rigby2D, with every
+              bone, mesh and animation, and play here on the Rigby2D runtime. No converter, no license fee, and an editor that is
+              still moving forward.
+            </p>
+            <ul class="ticks">
+              <li>DragonBones 4.5 and 5.x projects, with their texture atlas</li>
+              <li>Meshes, weights, IK, skins, nested weapons and effects, every animation</li>
+              <li>Ship to Godot, Unity, Defold, Cocos Creator, Phaser, PixiJS, the web or Rust</li>
+            </ul>
+            <div class="cta">
+              <a class="btn primary" href="./editor/" data-goatcounter-click="site-db-open">Open your DragonBones project</a>
+              <a class="btn" href="./docs/migrating-from-dragonbones.html">Migration guide</a>
+            </div>
+          </div>
+          <div class="db-stage">
+            <canvas aria-label="DragonBones demo characters playing on the Rigby2D runtime"></canvas>
+            <div class="db-controls">
+              <div class="chips" role="group" aria-label="Character" data-db-characters></div>
+              <div class="chips db-moves" role="group" aria-label="Moves" data-db-moves></div>
+            </div>
+            <p class="db-credit fine">
+              Characters: DragonBones demo art © The DragonBones team and other contributors,
+              <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/" rel="noopener license">CC BY-NC-SA 4.0</a>, from
+              <a href="https://github.com/DragonBones/Demos" rel="noopener">DragonBones/Demos</a>.
+              Rigby2D is not affiliated with DragonBones.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section id="switch" class="section switch-section" aria-labelledby="switch-title">
+        <div class="wrap">
+          <p class="eyebrow">Switching to Rigby2D</p>
+          <h2 id="switch-title">Coming from another tool?</h2>
+          <p class="section-lede">Bring what you made. See exactly what you gain, and how to move over in minutes.</p>
+          <div class="switch-grid">
+            <a class="switch-card" href="./vs/spine/" data-goatcounter-click="site-vs-spine"><b>Spine</b><span>Every feature free, and no license to ship. Your exports open without loss.</span><em>Rigby2D vs Spine →</em></a>
+            <a class="switch-card" href="./vs/dragonbones/" data-goatcounter-click="site-vs-dragonbones"><b>DragonBones</b><span>Your projects, nested weapons and effects included, on a desktop editor that keeps moving.</span><em>Rigby2D vs DragonBones →</em></a>
+            <a class="switch-card" href="./vs/moho/" data-goatcounter-click="site-vs-moho"><b>Moho</b><span>One-step rigging, lip-sync from audio and 4K film, free instead of $399.99.</span><em>Rigby2D vs Moho →</em></a>
+            <a class="switch-card" href="./vs/toon-boom/" data-goatcounter-click="site-vs-toonboom"><b>Toon Boom Harmony</b><span>Cut-out animation with no subscription, and the same rig plays in games.</span><em>Rigby2D vs Toon Boom →</em></a>
+          </div>
+        </div>
+      </section>
+
+      <section id="features" class="section">
+        <div class="wrap">
+          <h2>Everything from rig to render</h2>
+          <p class="section-lede">One editor for game characters and animated film, with the tools that usually take three apps. Every card links to its guide in the <a href="./docs/">documentation</a>.</p>
+          <div class="cards">
+            <article class="card">
+              <span class="card-icon"><i data-icon="wand-sparkles"></i></span>
+              <h3><a href="./docs/autorig.html">AutoRig</a></h3>
+              <p>Import a layered PSD or SVG and get an editable rig: bones, joints, bending meshes and IK, in one step.</p>
+            </article>
+            <article class="card">
+              <span class="card-icon"><i data-icon="repeat-2"></i></span>
+              <h3><a href="./docs/retargeting.html">Retargeting</a></h3>
+              <p>Animate once, reuse on every character. Bones are matched by name and motion scales to fit.</p>
+            </article>
+            <article class="card">
+              <span class="card-icon"><i data-icon="bone"></i></span>
+              <h3><a href="./docs/bones-and-slots.html">Full rigging toolset</a></h3>
+              <p>Weighted meshes, skins, events, clipping and paths, with IK, physics and slider constraints.</p>
+            </article>
+            <article class="card">
+              <span class="card-icon"><i data-icon="chart-spline"></i></span>
+              <h3><a href="./docs/animating.html">Animate with confidence</a></h3>
+              <p>Dopesheet, graph editor with Bézier handles, onion skin, a pose library and face controls.</p>
+            </article>
+            <article class="card">
+              <span class="card-icon"><i data-icon="clapperboard"></i></span>
+              <h3><a href="./docs/film.html">Film workspace</a></h3>
+              <p>An animated camera and audio tracks, rendered to PNG, WebM with alpha or MP4 at 4K.</p>
+            </article>
+            <article class="card">
+              <span class="card-icon"><i data-icon="audio-lines"></i></span>
+              <h3><a href="./docs/lip-sync.html">Lip-sync from audio</a></h3>
+              <p>Drop in a voice line and the mouth is keyed for you. Transcription runs on your computer.</p>
+            </article>
+            <article class="card">
+              <span class="card-icon"><i data-icon="drama"></i></span>
+              <h3><a href="./docs/scenes.html">Scenes</a></h3>
+              <p>Several characters on one stage, with clips, voices, parallax layers and a moving camera.</p>
+            </article>
+            <article class="card">
+              <span class="card-icon"><i data-icon="code"></i></span>
+              <h3><a href="./docs/scripting.html">Python and add-ons</a></h3>
+              <p>Python 3 built in. Turn scripts into tools, or install add-ons from the community.</p>
+            </article>
+            <article class="card">
+              <span class="card-icon"><i data-icon="panels-top-left"></i></span>
+              <h3><a href="./docs/interface.html">Made for your setup</a></h3>
+              <p>Pop panels out onto a second monitor and recall saved layouts. Pixel art stays sharp.</p>
+            </article>
+            <article class="card">
+              <span class="card-icon"><i data-icon="graduation-cap"></i></span>
+              <h3><a href="./docs/quick-start.html">Learn by doing</a></h3>
+              <p>Interactive lessons take you from a drawing to a moving character, inside the editor.</p>
+            </article>
+            <article class="card">
+              <span class="card-icon"><i data-icon="ruler"></i></span>
+              <h3><a href="./docs/guides.html">Guides and precision</a></h3>
+              <p>Rulers, guide lines and live guides for every move, rotate and scale.</p>
+            </article>
+            <article class="card">
+              <span class="card-icon"><i data-icon="globe"></i></span>
+              <h3><a href="./docs/installation.html">Runs anywhere</a></h3>
+              <p>In your browser with nothing to install, or as an app for Windows, macOS and Linux.</p>
+            </article>
+          </div>
+
+          <div class="showcase two">
+            <a class="video" href="https://youtu.be/I9G-ZbvNlGw" rel="noopener" data-goatcounter-click="site-watch-05-film">
+              <img src="../docs/images/promo-0.5.jpg" alt="Watch the Rigby2D 0.5 film on YouTube" loading="lazy" width="800" />
+              <span class="play" aria-hidden="true"></span>
+              <span class="video-label">Rigby2D 0.5: everything new in 54 seconds</span>
+            </a>
+            <a class="video" href="https://youtu.be/3StZlHwZeSo" rel="noopener" data-goatcounter-click="site-watch-nila-promo">
+              <img src="../docs/images/nila-promo.jpg" alt="Watch Meet NILA on YouTube: the Rigby2D mascot, animated in Rigby2D" loading="lazy" width="800" />
+              <span class="play" aria-hidden="true"></span>
+              <span class="video-label">Meet NILA: animated in Rigby2D</span>
+            </a>
+          </div>
+        </div>
+      </section>
+
+      <section id="support" class="section support-section home-fund" aria-labelledby="support-title">
+        <div class="wrap">
+          <div class="fund-hero-grid">
+            <div class="fund-hero-copy">
+              <p class="eyebrow">Support and contribute</p>
+              <h2 id="support-title">Free for everyone.<br /><span class="fund-accent">Paid for by a few.</span></h2>
+              <p class="section-lede">Rigby2D is open source and stays free. It grows with the people who use it: some give a few dollars a month, others give code, add-ons, bug reports and translations.</p>
+              <div class="fund-actions">
+                <a class="btn primary fund-sponsor" href="https://github.com/sponsors/jaisurya-dev-art" rel="noopener" data-goatcounter-click="site-support-sponsor"><i data-mark="github"></i> Sponsor on GitHub</a>
+                <a class="btn fund-link" href="./fund/" data-goatcounter-click="site-support-fund">Where the money goes <i data-icon="arrow-right"></i></a>
+              </div>
+            </div>
+            <div class="goal fund-goal" id="home-goal">
+              <div class="fund-goal-head">
+                <span class="fund-goal-icon"><i data-icon="heart"></i></span>
+                <div>
+                  <span class="goal-title">Signed by Rigby2D</span>
+                  <span class="goal-amount">Goal: $25 a month</span>
+                </div>
+              </div>
+              <div class="goal-bar" role="progressbar" aria-label="Progress toward the monthly goal" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span></span></div>
+              <p class="goal-note"></p>
+              <dl class="fund-stats">
+                <div><dt>Supporters</dt><dd id="home-stat-supporters">0</dd></div>
+                <div><dt>Founding spots left</dt><dd id="home-stat-founding">20</dd></div>
+              </dl>
+            </div>
+          </div>
+
+          <div class="st-sponsors home-studios" id="home-studios-block" hidden>
+            <h3>Studios backing Rigby2D</h3>
+            <div class="st-logos" id="home-studios"></div>
+          </div>
+
+          <div class="home-founding">
+            <h3>The Founding 20</h3>
+            <p class="fine">The first 20 monthly supporters keep a Founding Supporter mark for good.</p>
+            <ol class="seats" id="home-seats" aria-label="Founding Supporters"></ol>
+            <div class="fund-others" id="home-others-block" hidden>
+              <h3>Also supporting Rigby2D</h3>
+              <div class="patrons" id="home-others"></div>
+            </div>
+          </div>
+
+          <div class="support-grid">
+            <div class="support-card">
+              <h3>Contribute</h3>
+              <ul class="contribute-list">
+                <li><a href="https://github.com/jaisurya-dev-art/rigby2d/blob/develop/CONTRIBUTING.md" rel="noopener"><b>Write code</b></a><span>Fix a bug or build a feature. Every pull request gets a review.</span></li>
+                <li><a href="./addons/#publish"><b>Publish an add-on</b></a><span>Python tools for the Scripts menu, listed in the marketplace.</span></li>
+                <li><a href="https://github.com/jaisurya-dev-art/rigby2d/issues" rel="noopener"><b>Report bugs and ideas</b></a><span>A file that won't import, a feature you miss: it shapes the next release.</span></li>
+                <li><a href="https://discord.gg/PGgaTwbNH" rel="noopener"><b>Share your work</b></a><span>Post what you make on Discord and help the next animator find Rigby2D.</span></li>
+              </ul>
+            </div>
+            <div class="support-card">
+              <h3>Contributors</h3>
+              <p>Everyone whose code is in Rigby2D.</p>
+              <div class="wall" id="home-contributors"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="ai" class="section alt">
+        <div class="wrap split">
+          <div>
+            <p class="eyebrow">Built for AI assistants</p>
+            <h2>Your assistant works on the project, not just about it</h2>
+            <p>
+              Rigby2D ships a <a href="https://modelcontextprotocol.io" rel="noopener">Model Context Protocol</a> server. Any MCP-capable AI
+              assistant can read rigs, evaluate poses with the real runtime, find export problems, add bones and eased keys, AutoRig a
+              PSD, retarget animations, lip-sync dialogue and run Python, all inside the folders you allow.
+            </p>
+            <ul class="ticks">
+              <li>Edits save in the file's own format</li>
+              <li>Many edits apply as one atomic batch</li>
+              <li>One-file install, or one command from source</li>
+            </ul>
+            <a class="btn" href="./docs/mcp.html">MCP guide</a>
+          </div>
+          <div class="chat" aria-label="Example requests">
+            <p class="bubble">Which images are missing from <code>hero.skel</code>?</p>
+            <p class="bubble">Add a 1-second wave animation to <code>nila.rigby</code> that raises the right arm and fires a <code>hi</code> event at the end.</p>
+            <p class="bubble">Add <code>line.wav</code> to the talk animation and lip-sync NILA's mouth to it from this script.</p>
+            <p class="bubble">AutoRig <code>character.psd</code>.</p>
+          </div>
+        </div>
+      </section>
+
+      <section id="runtimes" class="section">
+        <div class="wrap split runtimes-split">
+          <div>
+            <p class="eyebrow">Play it anywhere</p>
+            <h2>Runtimes for every engine</h2>
+            <p>
+              Export once and play the same animation in Godot, Unity, Defold, Cocos Creator, Phaser, PixiJS, the browser or Rust. The runtimes are free, open
+              source and match each other frame by frame: meshes, physics, IK, skins, events and whole scenes.
+            </p>
+            <div class="engines"><a class="engine engine-godot" href="./docs/runtimes.html#godot"><i data-mark="godot"></i><span><b>Godot</b><small>Godot 4.3+</small></span></a><a class="engine engine-unity" href="./docs/runtimes.html#unity"><i data-mark="unity"></i><span><b>Unity</b><small>Unity 2021.3+ and 6</small></span></a><a class="engine engine-defold" href="./docs/runtimes.html#defold"><i data-mark="defold"></i><span><b>Defold</b><small>Defold 1.14+</small></span></a><a class="engine engine-cocos" href="./docs/runtimes.html#cocos-creator"><i data-mark="cocos"></i><span><b>Cocos Creator</b><small>Cocos 3.8</small></span></a><a class="engine engine-phaser" href="./docs/runtimes.html#phaser"><i data-mark="phaser"></i><span><b>Phaser</b><small>Phaser 3.60+ and 4</small></span></a><a class="engine engine-pixijs" href="./docs/runtimes.html#pixijs"><i data-mark="pixijs"></i><span><b>PixiJS</b><small>PixiJS 8 · WebGPU</small></span></a><a class="engine engine-javascript" href="./docs/runtimes.html#javascript"><i data-mark="javascript"></i><span><b>JavaScript</b><small>Any browser, WebGL</small></span></a><a class="engine engine-rust" href="./docs/runtimes.html#rust"><i data-mark="rust"></i><span><b>Rust</b><small>No dependencies</small></span></a></div>
+            <p class="fine">NILA at the top of this page is the JavaScript runtime, live in your browser.</p>
+            <a class="btn" href="./runtimes/">All runtimes</a> <a class="btn" href="./docs/runtimes.html">Runtime guide</a>
+          </div>
+          <div class="runtime-art" aria-hidden="true">
+            <img src="./art/rigbytron.webp" alt="" width="390" height="833" loading="lazy" />
+            <span class="orbit o1"><i data-mark="godot"></i></span>
+            <span class="orbit o2"><i data-mark="unity"></i></span>
+            <span class="orbit o3"><i data-mark="phaser"></i></span>
+            <span class="orbit o4"><i data-mark="javascript"></i></span>
+            <span class="orbit o5"><i data-mark="rust"></i></span>
+            <span class="orbit o6"><i data-mark="cocos"></i></span>
+            <span class="orbit o7"><i data-mark="defold"></i></span>
+            <span class="orbit o8"><i data-mark="pixijs"></i></span>
+          </div>
+        </div>
+      </section>
+
+      <section id="community" class="section community">
+        <div class="wrap community-row">
+          <div class="community-mark" aria-hidden="true"><svg class="discord-mark" viewBox="0 0 24 24" width="96" height="96" aria-hidden="true"><path fill="currentColor" d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"/></svg></div>
+          <div>
+            <p class="eyebrow">Community</p>
+            <h2>Join our Discord</h2>
+            <p class="section-lede">Show what you made, get help, report bugs and shape what comes next. Every release, tutorial and showcase lands there first, and so do the people building games and films with Rigby2D.</p>
+            <div class="cta">
+              <a class="btn discord" href="https://discord.gg/PGgaTwbNH" rel="noopener" data-goatcounter-click="site-community-section"><svg class="discord-mark" viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="currentColor" d="M20.317 4.3698a19.7913 19.7913 0 00-4.8851-1.5152.0741.0741 0 00-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 00-.0785-.037 19.7363 19.7363 0 00-4.8852 1.515.0699.0699 0 00-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 00.0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 00.0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 00-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 01-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 01.0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 01.0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 01-.0066.1276 12.2986 12.2986 0 01-1.873.8914.0766.0766 0 00-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 00.0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 00.0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 00-.0312-.0286zM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"/></svg>Join our Discord</a>
+              <a class="btn" href="./blog/" data-goatcounter-click="site-devlog-section">Read the devlog</a>
+            </div>
+          </div>
+          <img class="community-art" src="./art/nila-happy.webp" alt="" width="342" height="832" loading="lazy" />
+        </div>
+      </section>
+
+      <section id="download" class="section alt">
+        <div class="wrap">
+          <h2>Get Rigby2D</h2>
+          <p class="section-lede">Latest release: <a data-release href="https://github.com/jaisurya-dev-art/rigby2d/releases/latest">see all files</a></p>
+          <div class="downloads">
+            <a class="dl with-icon" href="./editor/" data-goatcounter-click="site-open-editor-downloads">
+              <span class="dl-icon dl-globe"><i data-icon="globe"></i></span>
+              <b>Browser editor</b>
+              <span>Runs right here. Open and save files through your browser.</span>
+            </a>
+            <a class="dl with-icon" href="https://github.com/jaisurya-dev-art/rigby2d/releases/latest/download/Rigby2D_x64_portable.exe" data-goatcounter-click="site-download-portable">
+              <span class="dl-icon dl-windows"><i data-mark="windows"></i></span>
+              <b>Windows, portable</b>
+              <span>One .exe, no install. Needs WebView2 (included in Windows 10 and 11).</span>
+            </a>
+            <a class="dl with-icon" href="https://github.com/jaisurya-dev-art/rigby2d/releases/latest" data-goatcounter-click="site-download-installer">
+              <span class="dl-icon dl-windows"><i data-mark="windows"></i></span>
+              <b>Windows installer</b>
+              <span>MSI or setup .exe, on the Releases page.</span>
+            </a>
+            <a class="dl with-icon" href="https://github.com/jaisurya-dev-art/rigby2d/releases/latest/download/Rigby2D_universal.dmg" data-goatcounter-click="site-download-macos">
+              <span class="dl-icon dl-apple"><i data-mark="apple"></i></span>
+              <b>macOS</b>
+              <span>One .dmg for Apple silicon and Intel. See the docs for the first start.</span>
+            </a>
+            <a class="dl with-icon" href="https://github.com/jaisurya-dev-art/rigby2d/releases/latest/download/Rigby2D_amd64.AppImage" data-goatcounter-click="site-download-linux">
+              <span class="dl-icon dl-linux"><i data-mark="linux"></i></span>
+              <b>Linux</b>
+              <span>AppImage for most distributions, or a .deb on the Releases page.</span>
+            </a>
+            <a class="dl with-icon" href="https://github.com/jaisurya-dev-art/rigby2d/releases/latest/download/Rigby2D-AI.mcpb" data-goatcounter-click="site-download-ai-extension">
+              <span class="dl-icon dl-bot"><i data-icon="bot"></i></span>
+              <b>AI extension</b>
+              <span>The MCP server as a one-file .mcpb install.</span>
+            </a>
+            <a class="dl with-icon" href="https://github.com/jaisurya-dev-art/rigby2d/blob/develop/runtimes/unity/com.rigby2d.unity/README.md" data-goatcounter-click="site-unity-runtime">
+              <span class="dl-icon dl-unity"><i data-mark="unity"></i></span>
+              <b>Unity runtime</b>
+              <span>Package for Unity 2021.3+ and Unity 6: add it from its git URL in the Package Manager.</span>
+            </a>
+            <a class="dl with-icon" href="https://github.com/jaisurya-dev-art/rigby2d/blob/develop/runtimes/godot/addons/rigby2d/README.md" data-goatcounter-click="site-godot-runtime">
+              <span class="dl-icon dl-godot"><i data-mark="godot"></i></span>
+              <b>Godot runtime</b>
+              <span>Addon and demo for Godot 4.3+ on Windows, macOS and Linux.</span>
+            </a>
+            <a class="dl with-icon" href="https://github.com/jaisurya-dev-art/rigby2d/blob/develop/runtimes/defold/README.md" data-goatcounter-click="site-defold-runtime">
+              <span class="dl-icon dl-defold"><i data-mark="defold"></i></span>
+              <b>Defold runtime</b>
+              <span>Native extension for Defold 1.14+, every platform: add one dependency URL.</span>
+            </a>
+            <a class="dl with-icon" href="https://github.com/jaisurya-dev-art/rigby2d/blob/develop/runtimes/cocos/README.md" data-goatcounter-click="site-cocos-runtime">
+              <span class="dl-icon dl-cocos"><i data-mark="cocos"></i></span>
+              <b>Cocos Creator runtime</b>
+              <span>RigbySkeleton for Cocos Creator 3.8 2D scenes. One folder for your assets. 中文说明.</span>
+            </a>
+            <a class="dl with-icon" href="https://github.com/jaisurya-dev-art/rigby2d/blob/develop/runtimes/phaser/README.md" data-goatcounter-click="site-phaser-runtime">
+              <span class="dl-icon dl-phaser"><i data-mark="phaser"></i></span>
+              <b>Phaser runtime</b>
+              <span>Plugin for Phaser 3.60+ and Phaser 4: this.add.rigby(). One .js file on the Releases page.</span>
+            </a>
+            <a class="dl with-icon" href="https://github.com/jaisurya-dev-art/rigby2d/blob/develop/runtimes/pixi/README.md" data-goatcounter-click="site-pixi-runtime">
+              <span class="dl-icon dl-pixijs"><i data-mark="pixijs"></i></span>
+              <b>PixiJS runtime</b>
+              <span>Native PixiJS 8 display objects on WebGL and WebGPU, batched with your sprites. One .js file on the Releases page.</span>
+            </a>
+          </div>
+          <p class="fine">Downloads are not code-signed yet: Windows may warn and macOS needs a right-click ▸ Open the first time (<a href="./docs/installation.html">installation guide</a>). Each release lists SHA-256 checksums, so compare them before running anything.</p>
+        </div>
+      </section>
+    </main>
+
+    <!--site-footer-->
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

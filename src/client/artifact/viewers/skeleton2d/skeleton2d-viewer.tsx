@@ -19,7 +19,7 @@ import { Slot, useChrome, useEscapeLayer } from '../../chrome.tsx'
 import type { Translate } from '../../../ui/locales.ts'
 import type { ArtifactView } from '../../../../types.ts'
 import { Skeleton2dAnimation, skeleton2dTextureUrl, useSkeleton2dModel } from './use-skeleton2d.tsx'
-import { Skeleton2dEditor } from './skeleton2d-editor.tsx'
+import { Skeleton2dRigbyEditor } from './skeleton2d-editor-host.tsx'
 import type { ViewerRegistration } from '../types.ts'
 
 /** The skeleton2d viewer: the animated model, letterboxed on a plain surface. */
@@ -39,7 +39,10 @@ export function Skeleton2dViewer({ view, t }: { view: ArtifactView; t: Translate
   if (load.status === 'empty' || load.status === 'bad') {
     return <div className="dsh-canvas-viewer-note">{t('canvas.viewer.tooLarge')}</div>
   }
-  const textureUrl = skeleton2dTextureUrl(chrome.projectId, view.file, load.model.texture)
+  const textureUrl =
+    load.status === 'ready' || load.status === 'ready-shell'
+      ? skeleton2dTextureUrl(chrome.projectId, view.file, load.status === 'ready' ? load.model.texture : load.shell.texture)
+      : undefined
   if (textureUrl === undefined) {
     return <div className="dsh-canvas-viewer-note">{t('canvas.viewer.tooLarge')}</div>
   }
@@ -57,16 +60,24 @@ export function Skeleton2dViewer({ view, t }: { view: ArtifactView; t: Translate
       </Slot>
       <div className="dsh-canvas-media">
         {editing ? (
-          <Skeleton2dEditor
+          // 编辑档 = vendor 进来的 Rigby2D（v2.08 改道）。v1 轻模型在打开那一步现场烘成
+          // DragonBones 三件套交给它导入，保存时收敛回 v3 外壳——迁移就是这条打开/保存
+          // 的路，没有单独的转换器。
+          <Skeleton2dRigbyEditor
             projectId={chrome.projectId}
             cardId={chrome.cardId}
             bridge={chrome.bridge}
-            disk={load.model}
+            artifactFile={view.file}
             textureUrl={textureUrl}
+            source={load.status === 'ready-shell' ? { shell: load.shell } : { model: load.model }}
             onSaved={chrome.saved}
             adopt={chrome.adopt}
             t={t}
           />
+        ) : load.status === 'ready-shell' ? (
+          // v3 外壳的预览：轻模型的参数化渲染吃不了 rigby 数据，卡面先退静态贴图；
+          // 轻量播放器（Rigby2D runtime）是下一步（需求文档 RI4）。
+          <img className="dsh-canvas-skeleton2d-view" src={textureUrl} alt="" draggable={false} />
         ) : (
           <Skeleton2dAnimation model={load.model} textureUrl={textureUrl} className="dsh-canvas-skeleton2d-view" />
         )}

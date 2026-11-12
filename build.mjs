@@ -136,3 +136,11 @@ await build({
   bundle: true, format: 'esm', platform: 'browser', target: ['es2022'],
   logLevel: 'info',
 })
+
+/**
+ * Rigby2D 编辑器嵌入包（骨骼动画卡 v2.08 改道）：vendor/rigby2d 用它自己的 vite 出静态包，
+ * 搬进 lib/assets/rigby2d-editor/。上游源码绝不进本仓 esbuild bundle——两套打包器互不介入；
+ * vendor 依赖没装时如实跳过（编辑档报「不可用」），不假装成功。
+ */
+const { buildRigby2dEditor } = await import('./rigby2d-build.mjs')
+buildRigby2dEditor()

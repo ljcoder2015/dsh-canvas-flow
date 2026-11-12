@@ -1,0 +1,44 @@
+{
+  "goal": {
+    "title": "Signed by Rigby2D",
+    "monthly": 25,
+    "percent": 0
+  },
+  "github": [
+    {
+      "login": "bakx",
+      "name": "Gideon Bakx",
+      "url": "https://github.com/bakx",
+      "avatar": "https://avatars.githubusercontent.com/u/2654446?u=e1ea4026c04f84a1f3c533b2607df7b97af68dd8&v=4&s=96",
+      "tier": 5
+    },
+    {
+      "login": "ph-developer",
+      "name": "Raphael C. Ramos",
+      "url": "https://github.com/ph-developer",
+      "avatar": "https://avatars.githubusercontent.com/u/13314770?u=b737fa2c20d897b899ddfa4971a5f8e650c01305&v=4&s=96",
+      "tier": 3
+    }
+  ],
+  "founding": [
+    "bakx",
+    "ph-developer"
+  ],
+  "others": [],
+  "contributors": [
+    {
+      "login": "jaisurya-dev-art",
+      "name": "jaisurya-dev-art",
+      "url": "https://github.com/jaisurya-dev-art",
+      "avatar": "https://avatars.githubusercontent.com/u/72857308?v=4&s=96",
+      "commits": 271
+    },
+    {
+      "login": "maruccimauro",
+      "name": "maruccimauro",
+      "url": "https://github.com/maruccimauro",
+      "avatar": "https://avatars.githubusercontent.com/u/139371013?v=4&s=96",
+      "commits": 40
+    }
+  ]
+}

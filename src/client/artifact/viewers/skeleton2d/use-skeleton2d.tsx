@@ -16,7 +16,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { ArtifactView } from '../../../../types.ts'
 import { cachedFetch } from '../../../canvas/asset/asset-cache.ts'
 import { markdownImageSrc } from '../markdown-image.ts'
-import { normalizeSkeleton2dModel, type Skeleton2dModel } from '../../../../core/skeleton2d/model.ts'
+import { normalizeSkeleton2dArtifact, type Skeleton2dModel, type Skeleton2dRigbyShell } from '../../../../core/skeleton2d/model.ts'
 import { createSkeleton2dStage } from './skeleton2d-stage.ts'
 
 /**
@@ -28,9 +28,12 @@ export interface Skeleton2dReader {
   readArtifact(projectId: string, cardId: string): Promise<ArtifactView>
 }
 
-/** 读一份模型的结果——四态与媒体卡同构，坏 JSON 单独一态（它是一句能修的话）。 */
+/** 读一份模型的结果——四态与媒体卡同构，坏 JSON 单独一态（它是一句能修的话）。
+ * v2.08 改道后产物有两种形态：v1 轻模型（`model`，自家 stage 渲染）与 v3 Rigby 外壳
+ * （`shell`，卡面退静态贴图、编辑档走 iframe 宿主）。 */
 export type Skeleton2dLoad =
   | { status: 'ready'; model: Skeleton2dModel }
+  | { status: 'ready-shell'; shell: Skeleton2dRigbyShell }
   | { status: 'absent' }
   | { status: 'empty' }
   | { status: 'bad' }
@@ -48,8 +51,11 @@ function loadModel(reader: Skeleton2dReader, projectId: string, cardId: string, 
         if (!view.present) return { status: 'absent' } as Skeleton2dLoad
         if (view.text === '') return view.truncated ? ({ status: 'absent' } as Skeleton2dLoad) : ({ status: 'empty' } as Skeleton2dLoad)
         try {
-          const model = normalizeSkeleton2dModel(JSON.parse(view.text) as Record<string, unknown>)
-          return model === undefined ? ({ status: 'bad' } as Skeleton2dLoad) : ({ status: 'ready', model } as Skeleton2dLoad)
+          const artifact = normalizeSkeleton2dArtifact(JSON.parse(view.text) as Record<string, unknown>)
+          if (artifact === undefined) return { status: 'bad' } as Skeleton2dLoad
+          return 'doc' in artifact
+            ? ({ status: 'ready-shell', shell: artifact } as Skeleton2dLoad)
+            : ({ status: 'ready', model: artifact } as Skeleton2dLoad)
         } catch {
           return { status: 'bad' } as Skeleton2dLoad
         }

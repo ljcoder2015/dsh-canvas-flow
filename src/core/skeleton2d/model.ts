@@ -30,6 +30,13 @@ export const SKELETON2D_FORMAT = 'dsh-skeleton2d'
 /** 当前格式版本。读侧对更高版本如实拒绝，而不是猜它长什么样。 */
 export const SKELETON2D_VERSION = 1
 
+/**
+ * v3（Rigby2D 改道）的版本号：外壳 + 内嵌 Rigby2D 项目。v2 从未发布过（v1.0 方案的
+ * 扩展字段没落地就被 v2.0 改道推翻），所以版本号从 1 直接跳到 3——与两份方案文档的
+ * 口径一致。归一按版本分派：`1`（或缺席）走轻模型，`3` 走外壳，其余拒绝。
+ */
+export const SKELETON2D_RIGBY_VERSION = 3
+
 /** 产物的扩展名（含点）。detectKind 按 basename 的这个尾巴认它。 */
 export const SKELETON2D_EXTENSION = '.skeleton2d.json'
 
@@ -494,4 +501,94 @@ export function textureReferenceOf(modelFile: string, texturePath: string): stri
     return texturePath.slice(directory.length + 1)
   }
   return `/${texturePath.replace(/^\/+/, '')}`
+}
+
+// ── v3：外壳 + 内嵌 Rigby2D 项目（编辑器 vendor 改道的产物形态）──────────────────
+//
+// 产物**仍是一份 JSON**（文件即产物、kind 检测、分目录、引用扫描全部不变），但编辑器
+// 换成了 vendor 进来的 Rigby2D：外壳三个字段归本仓管（format / version / texture——贴图
+// 引用是工作区路由与「引用即数据」要的），`rigby` 段是编辑器的工作档 + 随档文件，
+// **本仓不解读、只透传**——上游改内部 schema 我们零成本跟随。
+
+/** v3 外壳：本仓只认这三个字段 + prompt，其余全是 opaque。 */
+export interface Skeleton2dRigbyShell {
+  format: typeof SKELETON2D_FORMAT
+  version: typeof SKELETON2D_RIGBY_VERSION
+  /** 贴图路径：相对引用规则与 v1 相同（`texturePathOf` 共用）。 */
+  texture: string
+  /** Rigby2D 工作档（`.rigby` 的 JSON 本体，原样透传）。 */
+  doc: Record<string, unknown>
+  /** 工作档里的项目名（桥打开时给它当文件名）。 */
+  workfile: string
+  /** 随档文件（图集、贴图）：rigby 内部引用的相对路径 → base64。保存时由编辑器写回。 */
+  files: Record<string, string>
+  /** 生成时的提示词，只作出处记录（与 v1 同一纪律）。 */
+  prompt: string
+}
+
+/** 单个随档文件的 base64 字符上限（≈4.5MB 原始字节）：图集是大头，正常远够。 */
+export const RIGBY_FILE_MAX_CHARS = 6_000_000
+
+/** 一份产物两种形态：轻模型（v1，渲染走自家 stage）或 Rigby 外壳（v3，编辑器/播放器）。 */
+export type Skeleton2dArtifact = Skeleton2dModel | Skeleton2dRigbyShell
+
+/** 这份产物是不是 v3 外壳（卡面/预览/编辑按它分派渲染路径）。 */
+export function isRigbyShell(artifact: Skeleton2dArtifact): artifact is Skeleton2dRigbyShell {
+  return artifact.version === SKELETON2D_RIGBY_VERSION
+}
+
+/**
+ * 把一包原始 JSON 收敛成产物（v3 分派器）。
+ *
+ * v3 的硬条件：`doc` 必须是对象（编辑器的工作档）、`workfile` 非空、贴图非空；
+ * 随档文件的键不许穿越（`..` 段与根相对前缀都拒——它们是编辑器内部的相对引用，
+ * 出现穿越就是坏数据）。值只收非空字符串且限长（上限即坏）。
+ */
+export function normalizeSkeleton2dArtifact(raw: RawSkeleton2dModel | undefined | null): Skeleton2dArtifact | undefined {
+  if (raw === undefined || raw === null) return undefined
+  const version = finite(raw.version)
+  if (version === SKELETON2D_RIGBY_VERSION) {
+    const format = text(raw.format)
+    const texture = text(raw.texture)
+    const workfile = text(raw.workfile)
+    if (format !== SKELETON2D_FORMAT || texture === undefined || workfile === undefined) return undefined
+    if (typeof raw.doc !== 'object' || raw.doc === null || Array.isArray(raw.doc)) return undefined
+    const files: Record<string, string> = {}
+    if (raw.files !== undefined) {
+      if (typeof raw.files !== 'object' || raw.files === null || Array.isArray(raw.files)) return undefined
+      for (const [name, value] of Object.entries(raw.files as Record<string, unknown>)) {
+        if (typeof value !== 'string' || value === '' || value.length > RIGBY_FILE_MAX_CHARS) return undefined
+        const segments = name.split('/')
+        if (name === '' || name.startsWith('/') || segments.some((s) => s === '' || s === '.' || s === '..')) return undefined
+        files[name] = value
+      }
+    }
+    return {
+      format: SKELETON2D_FORMAT,
+      version: SKELETON2D_RIGBY_VERSION,
+      texture,
+      doc: raw.doc as Record<string, unknown>,
+      workfile,
+      files,
+      prompt: text(raw.prompt) ?? '',
+    }
+  }
+  return normalizeSkeleton2dModel(raw)
+}
+
+/** v3 外壳的稳定序列化（与 `serializeSkeleton2dModel` 同一条纪律：字段顺序固定）。 */
+export function serializeSkeleton2dShell(shell: Skeleton2dRigbyShell): string {
+  return `${JSON.stringify(
+    {
+      format: shell.format,
+      version: shell.version,
+      texture: shell.texture,
+      doc: shell.doc,
+      workfile: shell.workfile,
+      files: shell.files,
+      prompt: shell.prompt,
+    },
+    null,
+    2,
+  )}\n`
 }

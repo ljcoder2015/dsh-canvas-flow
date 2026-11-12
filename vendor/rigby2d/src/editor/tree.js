@@ -1,0 +1,296 @@
+// SPDX-License-Identifier: MIT OR Apache-2.0
+// Tree panel: the skeleton (bones, slots and their attachments) plus draw order, skins,
+// constraints, events, animations and images, in collapsible sections.
+
+import { listConstraints } from '../core/constraintdata.js';
+import { Mode, selBone, selSlot } from './app.js';
+import { CONSTRAINT_LABELS, PHYSICS_HINT, createConstraint } from './constraintui.js';
+import { dragOrderRow } from './draworderdnd.js';
+import * as edit from './edit.js';
+import { onionBonePanel, rgbCss } from './onionui.js';
+import { createEvent, createSkin } from './skineventui.js';
+import { h, popupMenu } from './widgets.js';
+import { has } from './workspaces.js';
+import { addActorMenu, sceneRows } from './sceneui.js';
+import { t } from './i18n.js';
+
+/** Collapsed sections and bones (kept for the session). */
+const collapsed = new Set(['images', 'events']);
+
+/** The app and the tree's root, so bone-hover updates reach the live DOM between rebuilds. */
+let treeApp = null;
+let treeRoot = null;
+
+/**
+ * Toggles the hover class on bone rows. Registered as `app.onHoverChange` on every rebuild so the
+ * callback always points at the current DOM; hover never rebuilds the tree, only re-paints classes.
+ */
+function applyBoneHover(bone) {
+  if (!treeRoot) return;
+  for (const r of treeRoot.querySelectorAll('.row[data-bone]')) {
+    r.classList.toggle('bone-hover', Number(r.dataset.bone) === bone);
+  }
+}
+
+function section(app, id, title, count, children, actions = null) {
+  const open = !collapsed.has(id);
+  return h(
+    'div',
+    { class: 'tree-section' },
+    h(
+      'div',
+      {
+        class: 'tree-heading',
+        onclick: () => {
+          if (open) collapsed.add(id);
+          else collapsed.delete(id);
+          app.changed();
+        },
+      },
+      h('span', { class: 'twisty' }, open ? '▾' : '▸'),
+      h('span', null, title),
+      count !== null ? h('span', { class: 'count' }, String(count)) : null,
+      actions ? h('span', { class: 'actions', onclick: (e) => e.stopPropagation() }, actions) : null,
+    ),
+    open ? children : null,
+  );
+}
+
+function row(label, { depth = 0, selected = false, cls = '', onclick, extra = null, title, tut = null, bone = null } = {}) {
+  const attrs = { class: `row${selected ? ' selected' : ''}${cls ? ` ${cls}` : ''}`, 'data-tut': tut, style: { paddingLeft: `${depth * 14 + 4}px` }, onclick, title };
+  // Bone rows drive (and show) the shared hover: hovering one lights the bone up here, in the
+  // viewport and in the timeline. Done with mouse enter/leave so it never rebuilds the tree.
+  if (bone !== null) {
+    attrs['data-bone'] = String(bone);
+    attrs.onmouseenter = () => treeApp?.setHover(bone);
+    attrs.onmouseleave = () => treeApp?.setHover(null);
+  }
+  return h('div', attrs, label, extra);
+}
+
+export function render(app, el) {
+  treeApp = app;
+  const doc = app.doc;
+  const selected = new Set(app.selectedBones());
+  const select = (item) => (e) => app.select(item, e.ctrlKey || e.metaKey);
+  const pose = app.pose();
+
+  // Skeleton: bones nested by parent, each bone's slots, each slot's attachments.
+  const skeleton = [];
+  const visit = (bone, depth) => {
+    const kids = doc.children(bone);
+    const slots = doc.slots.map((s, i) => [s, i]).filter(([s]) => s.bone === bone);
+    const key = `bone:${bone}`;
+    const hasChildren = kids.length || slots.length;
+    const open = !collapsed.has(key);
+    const twisty = hasChildren
+      ? h(
+          'span',
+          {
+            class: 'twisty right',
+            title: open ? t('Collapse') : t('Expand'),
+            onclick: (e) => {
+              e.stopPropagation();
+              if (open) collapsed.add(key);
+              else collapsed.delete(key);
+              app.changed();
+            },
+          },
+          open ? '▾' : '▸',
+        )
+      : null;
+    // Onion skinning: a per-bone toggle plus marks showing which direction(s) are ghosted.
+    const animate = app.mode === Mode.Animate;
+    const oc = animate && app.onion.enabled ? app.onionFor(bone) : null;
+    const direct = !!app.onionOverride(bone);
+    const marks =
+      oc && app.onionOverrideCount() > 0
+        ? h(
+            'span',
+            { class: 'onion-marks' },
+            oc.past > 0 ? h('span', { class: 'onion-mark', title: t('Showing {count} past frame(s)', { count: oc.past }), style: { color: rgbCss(oc.pastColor) } }, '◀') : null,
+            oc.future > 0 ? h('span', { class: 'onion-mark', title: t('Showing {count} future frame(s)', { count: oc.future }), style: { color: rgbCss(oc.futureColor) } }, '▶') : null,
+          )
+        : null;
+    const onionBtn = animate
+      ? h(
+          'span',
+          {
+            class: `onion-bonebtn${direct ? ' on' : ''}`,
+            title: t('Configure onion skin for this bone (past / future, color)'),
+            onclick: (e) => {
+              e.stopPropagation();
+              const r = e.target.getBoundingClientRect();
+              onionBonePanel(app, bone, r.left, r.bottom);
+            },
+          },
+          '◍',
+        )
+      : null;
+    skeleton.push(
+      row(`🦴 ${doc.bones[bone].name}`, {
+        tut: `bone:${doc.bones[bone].name}`,
+        depth,
+        selected: selected.has(bone),
+        onclick: select({ bone }),
+        extra: [marks, onionBtn, twisty],
+        bone,
+      }),
+    );
+    if (!open) return;
+    for (const [slot, i] of slots) {
+      skeleton.push(row(`▣ ${slot.name}`, { tut: `slot:${slot.name}`, depth: depth + 1, cls: 'slot', selected: selSlot(app.sel) === i, onclick: select({ slot: i }) }));
+      const names = new Set(slot.attachments.map((a) => a.name));
+      if (doc.skin) for (const a of doc.skinAttachments(i, doc.skin)) names.add(a.name);
+      for (const name of names) {
+        const visible = pose.attachment[i] === name;
+        skeleton.push(
+          row(`${visible ? '📎' : '·'} ${name}`, {
+            depth: depth + 2,
+            cls: `attachment${visible ? ' visible' : ''}`,
+            title: visible ? t('Visible attachment') : t('Click to show this attachment (keys it in Animate mode)'),
+            onclick: () => {
+              app.select({ slot: i });
+              edit.setSlotAttachment(app, i, visible ? null : name);
+            },
+          }),
+        );
+      }
+    }
+    for (const c of kids) visit(c, depth + 1);
+  };
+  visit(0, 0);
+  const addBone = h(
+    'button',
+    { class: 'small', disabled: app.mode !== Mode.Setup, title: t('Add a child bone to the selected bone'), onclick: () => edit.addChildBone(app, selBone(app.sel) ?? 0) },
+    t('＋ Bone'),
+  );
+
+  // Draw order: front of the list is drawn on top.
+  const n = doc.slots.length;
+  const move = (from, to) => () => {
+    doc.moveSlot(from, to);
+    app.select({ slot: to });
+  };
+  const order = [];
+  for (let i = n - 1; i >= 0; i--) {
+    const slotRow = row(`▣ ${doc.slots[i].name}`, { selected: selSlot(app.sel) === i, onclick: select({ slot: i }), title: t('Drag to reorder') });
+    dragOrderRow(app, slotRow, i, n);
+    order.push(
+      h(
+        'div',
+        { class: 'order-row', 'data-slot': i },
+        h('button', { class: 'small', disabled: i + 1 >= n, onclick: move(i, i + 1), title: t('Draw in front') }, '▲'),
+        h('button', { class: 'small', disabled: i === 0, onclick: move(i, i - 1), title: t('Draw behind') }, '▼'),
+        slotRow,
+      ),
+    );
+  }
+  const orderList = h('div', { class: 'order-list' }, ...order);
+
+  // Skins: the active one shows the dot.
+  // Clicking a skin makes it active and shows its settings.
+  const pickSkin = (name) => () => {
+    doc.skin = name === 'default' ? null : name;
+    app.sel = { skin: name };
+    app.multi.clear();
+    app.changed();
+  };
+  const skins = [
+    row(`${doc.skin ? '○' : '●'} ${t('default')}`, { selected: app.sel?.skin === 'default', onclick: pickSkin('default') }),
+    ...doc.skins.map((s) => row(`${doc.skin === s.name ? '●' : '○'} ${s.name}`, { selected: app.sel?.skin === s.name, onclick: pickSkin(s.name) })),
+  ];
+  const setupOnly = app.mode !== Mode.Setup;
+  const newSkin = h('button', { class: 'small', disabled: setupOnly, title: t('New skin (becomes active)'), onclick: () => createSkin(app) }, t('＋ New'));
+  const events = doc.events.map((e) =>
+    row(`⚑ ${e.name}`, {
+      selected: app.sel?.event === e.name,
+      onclick: () => {
+        app.sel = { event: e.name };
+        app.multi.clear();
+        app.changed();
+      },
+    }),
+  );
+  const newEvent = h('button', { class: 'small', disabled: setupOnly, title: t('New event'), onclick: () => createEvent(app) }, t('＋ New'));
+
+  // Constraints in application order; click to edit their settings.
+  const CONSTRAINT_ICONS = { ik: '⊸', transform: '⇄', path: '∿', physics: '≋', slider: '⇥' };
+  const constraints = listConstraints(doc).map((c) => {
+    const known = c.type in CONSTRAINT_LABELS;
+    return row(`${CONSTRAINT_ICONS[c.type] ?? '⊸'} ${c.name}`, {
+      cls: known ? '' : 'weak',
+      selected: app.sel?.constraint === c.name,
+      title: known ? t('{type} constraint', { type: t(CONSTRAINT_LABELS[c.type]) }) : t('{type} constraint (kept, not evaluated)', { type: c.type }),
+      onclick: () => {
+        app.sel = { constraint: c.name };
+        app.multi.clear();
+        app.changed();
+      },
+    });
+  });
+  const newConstraint = h(
+    'button',
+    {
+      class: 'small',
+      disabled: app.mode !== Mode.Setup,
+      title: t('New constraint from the selected bones'),
+      onclick: (e) => {
+        const r = e.target.getBoundingClientRect();
+        popupMenu(
+          r.left,
+          r.bottom,
+          Object.entries(CONSTRAINT_LABELS).map(([type, label]) => ({
+            label: t('{type} constraint', { type: t(label) }),
+            action: () => {
+              const result = createConstraint(app, type);
+              if (result.startsWith('!')) app.setStatus(result.slice(1));
+              else {
+                app.sel = { constraint: result };
+                app.multi.clear();
+                app.setStatus(t("Created {type} constraint '{name}'", { type: t(label), name: result }) + (type === 'physics' ? `. ${t(PHYSICS_HINT)}` : ''));
+              }
+              app.changed();
+            },
+          })),
+        );
+      },
+    },
+    t('＋ New'),
+  );
+
+  const animations = doc.animations.map((a, i) =>
+    row(`${app.anim === i ? '▶' : '·'} ${a.name}`, {
+      selected: app.anim === i,
+      onclick: () => {
+        app.anim = i;
+        app.mode = Mode.Animate;
+        app.time = 0;
+        app.selectedKeys.clear();
+        app.changed();
+      },
+    }),
+  );
+
+  // The tree is rebuilt on every change: keep where the user had scrolled to.
+  const scrolled = el.querySelector('.tree-scroll')?.scrollTop ?? 0;
+  el.replaceChildren(
+    h('div', { class: 'tree-scroll scroll' },
+      has(app, 'scene') || doc.scene?.actors.length
+        ? section(app, 'scene', t('Scene'), doc.scene?.actors.length ?? 0, doc.scene?.actors.length ? sceneRows(app, row) : [h('div', { class: 'small weak pad' }, t('Characters acting together: ＋ Actor adds one (File ▸ New ▸ Scene starts a stage with a camera).'))], h('button', { class: 'small', title: t('Add a character to the scene'), onclick: (e) => { const r = e.target.getBoundingClientRect(); addActorMenu(app, r.left, r.bottom); } }, t('＋ Actor')))
+        : null,
+      section(app, 'skeleton', doc.name || t('Skeleton'), doc.bones.length, skeleton, addBone),
+      section(app, 'draworder', t('Draw order'), n, orderList),
+      section(app, 'skins', t('Skins'), doc.skins.length + 1, skins, newSkin),
+      section(app, 'constraints', t('Constraints'), constraints.length, constraints, newConstraint),
+      section(app, 'events', t('Events'), doc.events.length, events, newEvent),
+      section(app, 'animations', t('Animations'), doc.animations.length, animations),
+      section(app, 'images', t('Images'), doc.images.length, doc.images.map((i) => row(`🖼 ${i.name}`, { title: `${i.width}×${i.height}` }))),
+    ),
+  );
+  el.querySelector('.tree-scroll').scrollTop = scrolled;
+  // Keep hover alive across the rebuild and keep the callback pointing at this fresh DOM.
+  treeRoot = el;
+  app.onHoverChange = applyBoneHover;
+  applyBoneHover(app.hoverBone);
+}

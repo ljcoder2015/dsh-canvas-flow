@@ -586,6 +586,11 @@ body[data-ds-dark-theme] .dsh-canvas-root{
 .dsh-canvas-media img,.dsh-canvas-media video{max-width:100%;max-height:100%;object-fit:contain;border-radius:4px}
 /* Skeleton2D 全屏预览：一块铺满面板的动画画布（WebGL 自管贴合，contain 语义在顶点算术里）。 */
 .dsh-canvas-skeleton2d-view{max-width:100%;max-height:100%;width:100%;height:100%;border-radius:4px;display:block}
+/* Skeleton2D 编辑档（v2.08 改道）：vendor 的 Rigby2D 编辑器跑在 iframe 里，铺满面板；
+   脏标记与保存中是右上角一枚小徽标——关档丢改动的提醒要看得见。 */
+.dsh-canvas-rigby-host{position:relative;flex:1 1 auto;min-width:0;min-height:0;display:flex;width:100%;height:100%}
+.dsh-canvas-rigby-frame{flex:1 1 auto;width:100%;height:100%;border:none;background:#18181b}
+.dsh-canvas-rigby-dirty{position:absolute;top:10px;right:14px;z-index:3;font:11px/18px var(--dsh-font);color:var(--dsh-fg);background:var(--dsh-card);border:1px solid var(--dsh-hairline);border-radius:6px;padding:1px 8px}
 /* Skeleton2D 编辑器：左边同一块会动的画布，右边一栏参数手柄。预览与编辑共用一份循环，
    切过去只是多出一栏面板；贴图的 contain 贴合照旧在舞台里，锚点标记按贴合盒定位。
    三种模式（参数 / 网格 / 时间线）共用这层骨架——编辑器是纵向的列：主体一行

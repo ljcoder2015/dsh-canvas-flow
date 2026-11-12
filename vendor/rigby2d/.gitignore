@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+dist-mcpb/
+dist-phaser/
+dist-pixi/
+dist-cocos/
+src-tauri/target/
+src-tauri/gen/schemas/
+*.swp
+.DS_Store
+
+# Third-party binaries must never be committed
+*.exe
+*.msi
+*.dmg
+_site/

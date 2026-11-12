@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rigby2D WebGL player</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #1e1e1e;
+        --panel: #2a2a2a;
+        --text: #ddd;
+        --weak: #999;
+      }
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font: 13px system-ui, 'Segoe UI', sans-serif;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+      }
+      header {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+        padding: 8px 12px;
+        background: var(--panel);
+      }
+      canvas {
+        flex: 1;
+        width: 100%;
+        min-height: 0;
+        display: block;
+      }
+      #stats {
+        margin-left: auto;
+        color: var(--weak);
+        font-family: ui-monospace, Consolas, monospace;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <label>Skeleton, atlas and page images <input id="files" type="file" multiple accept=".json,.skel,.atlas,.txt,.png,.jpg,.webp" /></label>
+      <select id="anim"></select>
+      <select id="skin"></select>
+      <label><input id="layer" type="checkbox" /> second track</label>
+      <select id="anim2"></select>
+      <span id="stats"></span>
+    </header>
+    <canvas id="view"></canvas>
+    <script type="module" src="./webgl.js"></script>
+  </body>
+</html>

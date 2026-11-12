@@ -56,6 +56,31 @@ export function Skeleton2dCardFace(props: {
       )
     }
   }
+  // v3 外壳（Rigby2D 改道）：轻模型的参数化渲染吃不了 rigby 数据，卡面退**静态贴图**
+  // （比例照报——贴图没变，卡片的宽高比语义不变）。轻量播放器是下一步（RI4）。
+  if (load !== undefined && load.status === 'ready-shell') {
+    const textureUrl = skeleton2dTextureUrl(projectId, card.file, load.shell.texture)
+    if (textureUrl !== undefined) {
+      return (
+        <img
+          className="dsh-canvas-card-media"
+          src={textureUrl}
+          alt=""
+          draggable={false}
+          onLoad={(event) => {
+            const image = event.currentTarget
+            if (image.naturalWidth === 0 || image.naturalHeight === 0) return
+            const aspect = image.naturalWidth / image.naturalHeight
+            const stamp = `${card.id}@${textureUrl}`
+            if (reported.current === stamp) return
+            reported.current = stamp
+            if (card.aspect !== undefined && Math.abs(aspect - card.aspect) <= ASPECT_EPSILON) return
+            void bridge.setAspect(projectId, card.id, aspect).catch(() => undefined)
+          }}
+        />
+      )
+    }
+  }
   // 还没有产物、读不懂、贴图不在：卡面说一句人话——与媒体卡的 absent/too-large 用
   // 同一批键。empty（0 字节）退给大纲行这件事在这里做不了（这个组件只占一个分支），
   // 统一说「产物不存在」是它的诚实下限。

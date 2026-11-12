@@ -1,0 +1,83 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Rigby2D",
+  "version": "0.5.1",
+  "identifier": "io.github.jaisurya-dev-art.rigby2d",
+  "build": {
+    "beforeDevCommand": "npm run web:dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm run web:build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Rigby2D",
+        "width": 1400,
+        "height": 860,
+        "minWidth": 900,
+        "minHeight": 560,
+        "label": "main",
+        "maximized": true,
+        "visible": false
+      },
+      {
+        "label": "splash",
+        "title": "Rigby2D",
+        "url": "splash.html",
+        "width": 720,
+        "height": 405,
+        "center": true,
+        "resizable": false,
+        "decorations": false,
+        "focus": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; script-src 'self' 'wasm-unsafe-eval'; img-src 'self' blob: data: https://rigby2d.com https://jaisurya-dev-art.github.io; style-src 'self' 'unsafe-inline'; connect-src 'self' ipc: http://ipc.localhost https://rigby2d.com https://jaisurya-dev-art.github.io https://huggingface.co https://*.huggingface.co https://*.hf.co"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "msi",
+      "nsis"
+    ],
+    "publisher": "jaisurya-dev-art",
+    "copyright": "Copyright (c) 2026 jaisurya-dev-art. Code licensed MIT OR Apache-2.0. Rigby2D names and logos are trademarks of the Rigby2D project.",
+    "category": "GraphicsAndDesign",
+    "shortDescription": "2D skeletal animation for games, films and interactive experiences",
+    "longDescription": "Rigby2D: open-source 2D skeletal animation for games, films and interactive experiences.",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": ["rigby"],
+        "name": "Rigby2D work file",
+        "description": "Rigby2D work file",
+        "role": "Editor"
+      }
+    ],
+    "homepage": "https://rigby2d.com",
+    "license": "MIT OR Apache-2.0"
+  },
+  "plugins": {
+    "fs": {
+      "requireLiteralLeadingDot": false
+    },
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFDMDcyRDM5RTk1NjAxMTUKUldRVkFWYnBPUzBIcktsVytrd1IwbXBWNG5uUGR0bjk5b2ViYytGdWtJOW0zNGEvbEdVMUlKZU4K",
+      "endpoints": [
+        "https://github.com/jaisurya-dev-art/rigby2d/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

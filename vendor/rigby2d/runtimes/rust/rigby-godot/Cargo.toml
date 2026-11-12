@@ -1,0 +1,16 @@
+[package]
+name = "rigby-godot"
+description = "Rigby2D runtime for Godot 4 (GDExtension): RigbySkeleton2D node playing skeleton JSON / .skel exports."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+rigby-runtime = { path = "../rigby-runtime" }
+# Targets the Godot 4.3 extension API, so the library loads in Godot 4.3 and every later version.
+godot = { version = "0.5.5", features = ["api-4-3"] }
