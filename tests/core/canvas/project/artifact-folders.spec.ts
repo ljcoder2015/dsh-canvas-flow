@@ -57,7 +57,6 @@ describe('目录名只有一份真源', () => {
   })
 
   it('目录名是英文小写（项目结构会被 git 与别的编辑器读到，不是界面文案）', () => {
-    // skeleton2d 的目录跟着 kind id 走（`skeleton2d/`），数字是它名字的一部分。
     for (const name of Object.values(ARTIFACT_FOLDERS)) expect(name).toMatch(/^[a-z0-9]+$/)
   })
 
@@ -274,20 +273,15 @@ describe('新建判撞（v2.10）：磁盘说了算', () => {
 
   it('词干空闲就原样落定——一个多余序号都不加', async () => {
     await expect(
-      settleArtifactPath({ kind: 'skeleton2d', stem: '动画卡1', extension: 'skeleton2d.json', taken: taker([]) }),
-    ).resolves.toBe('skeleton2d/动画卡1.skeleton2d.json')
+      settleArtifactPath({ kind: 'data', stem: '表格1', extension: 'csv', taken: taker([]) }),
+    ).resolves.toBe('data/表格1.csv')
   })
 
   it('已删卡留下的文件同样占名：撞了从 -2 往下试，与改名、导入同一条规矩', async () => {
-    const taken = taker(['skeleton2d/动画卡1.skeleton2d.json', 'skeleton2d/动画卡1-2.skeleton2d.json'])
+    const taken = taker(['data/表格1.csv', 'data/表格1-2.csv'])
     await expect(
-      settleArtifactPath({ kind: 'skeleton2d', stem: '动画卡1', extension: 'skeleton2d.json', taken }),
-    ).resolves.toBe('skeleton2d/动画卡1-3.skeleton2d.json')
-  })
-
-  it('双扩展名整段保住：-2 落在 `.skeleton2d` 之前，不是 `.json` 之前', async () => {
-    const settled = await settleArtifactPath({ kind: 'skeleton2d', stem: '动画卡1', extension: 'skeleton2d.json', taken: taker(['skeleton2d/动画卡1.skeleton2d.json']) })
-    expect(settled).toBe('skeleton2d/动画卡1-2.skeleton2d.json')
+      settleArtifactPath({ kind: 'data', stem: '表格1', extension: 'csv', taken }),
+    ).resolves.toBe('data/表格1-3.csv')
   })
 
   it('普通单扩展名同样成立，目录只从映射表取', async () => {

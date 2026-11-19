@@ -1,7 +1,7 @@
 /**
  * 新建判撞（v2.10）的**接线**判据。
  *
- * 用户原话：「已经删除的骨骼节点，新建时会变成旧的已经删除的卡片」。根因是 F1.2 的
+ * 用户原话：「已经删除的节点，新建时会变成旧的已经删除的卡片」。根因是 F1.2 的
  * 「落座从不删产物」与客户端起名只对板上负责这两条规矩在 `createCard` 处接不起来：
  * 名字被判作空闲，切绑却切到了已删卡留在磁盘上的那份产物上。修法是给 `createCard`
  * 一条对磁盘落定的路（`spawnStem`），判据本身在 `core/canvas/project/artifact-folders.ts`
@@ -45,7 +45,7 @@ describe('宿主：createCard 的落定路', () => {
     expect(body, '回报里的名字也从落定路径推，客户端不用自己再算一遍').toMatch(/cardNameOf\(\{ file: bound/)
   })
 
-  it('双扩展名从 file 上剥词干前缀拿——skeleton2d 的 `-2` 落在 .skeleton2d 之前', () => {
+  it('扩展名从 file 上剥词干前缀拿，多段扩展名原样保住', () => {
     const body = createCard()
     expect(body).toMatch(/base\.startsWith\(spawnStem\) \? base\.slice\(spawnStem\.length\) : extensionOf\(base\)/)
   })

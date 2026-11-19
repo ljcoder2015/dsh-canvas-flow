@@ -584,53 +584,6 @@ body[data-ds-dark-theme] .dsh-canvas-root{
   font:10px/14px var(--dsh-mono);color:var(--dsh-fg-3)}
 .dsh-canvas-media{flex:1 1 auto;min-height:0;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto}
 .dsh-canvas-media img,.dsh-canvas-media video{max-width:100%;max-height:100%;object-fit:contain;border-radius:4px}
-/* Skeleton2D 全屏预览：一块铺满面板的动画画布（WebGL 自管贴合，contain 语义在顶点算术里）。 */
-.dsh-canvas-skeleton2d-view{max-width:100%;max-height:100%;width:100%;height:100%;border-radius:4px;display:block}
-/* Skeleton2D 编辑档（v2.08 改道）：vendor 的 Rigby2D 编辑器跑在 iframe 里，铺满面板；
-   脏标记与保存中是右上角一枚小徽标——关档丢改动的提醒要看得见。 */
-.dsh-canvas-rigby-host{position:relative;flex:1 1 auto;min-width:0;min-height:0;display:flex;width:100%;height:100%}
-.dsh-canvas-rigby-frame{flex:1 1 auto;width:100%;height:100%;border:none;background:#18181b}
-.dsh-canvas-rigby-dirty{position:absolute;top:10px;right:14px;z-index:3;font:11px/18px var(--dsh-font);color:var(--dsh-fg);background:var(--dsh-card);border:1px solid var(--dsh-hairline);border-radius:6px;padding:1px 8px}
-/* Skeleton2D 编辑器：左边同一块会动的画布，右边一栏参数手柄。预览与编辑共用一份循环，
-   切过去只是多出一栏面板；贴图的 contain 贴合照旧在舞台里，锚点标记按贴合盒定位。
-   三种模式（参数 / 网格 / 时间线）共用这层骨架——编辑器是纵向的列：主体一行
-   （画布 + 面板），时间线模式下底下再挂一条轨道带。 */
-.dsh-canvas-skeleton2d-editor{flex:1 1 auto;min-width:0;min-height:0;display:flex;flex-direction:column;box-sizing:border-box;width:100%;height:100%}
-.dsh-canvas-skeleton2d-main{flex:1 1 auto;min-height:0;display:flex;gap:14px}
-.dsh-canvas-skeleton2d-stagebox{position:relative;flex:1 1 auto;min-width:0;min-height:0}
-.dsh-canvas-skeleton2d-anchor{position:absolute;width:14px;height:14px;box-sizing:border-box;margin:-7px 0 0 -7px;
-  border:2px solid var(--dsh-breeze);border-radius:50%;background:color-mix(in srgb,var(--dsh-breeze) 30%,transparent);
-  pointer-events:none;z-index:1}
-.dsh-canvas-skeleton2d-panel{flex:none;width:236px;min-height:0;overflow:auto;display:flex;flex-direction:column;gap:10px}
-/* 模式页签：三颗一排，选中那颗主题蓝说话——与档位按钮同一条视觉纪律。 */
-.dsh-canvas-skeleton2d-tabs{display:flex;gap:4px;flex:none}
-.dsh-canvas-skeleton2d-tab{flex:1 1 0;height:24px;border:1px solid var(--dsh-mid);border-radius:6px;
-  background:var(--dsh-card);color:var(--dsh-fg-2);font:11px/22px var(--dsh-font);cursor:pointer;padding:0}
-.dsh-canvas-skeleton2d-tab:hover{border-color:var(--dsh-fg-3);color:var(--dsh-fg)}
-.dsh-canvas-skeleton2d-tab[data-current=true]{border-color:var(--dsh-breeze);color:var(--dsh-fg);background:var(--dsh-hl)}
-.dsh-canvas-skeleton2d-badge{flex:none;font:10px/14px var(--dsh-font);color:var(--dsh-breeze);
-  border:1px solid var(--dsh-breeze);border-radius:4px;padding:0 4px}
-/* 网格叠层：一块盖在动画画布上的透明画布——网格线、雕过的顶点、抓住的顶点都在这里，
-   指针事件也被它吃掉（动画画布在底下继续放动画）。 */
-.dsh-canvas-skeleton2d-meshoverlay{position:absolute;inset:0;z-index:2;cursor:crosshair;touch-action:none}
-/* 时间线带：横跨编辑器底部的一条，轨道画布铺满它。 */
-.dsh-canvas-skeleton2d-strip{flex:none;height:150px;border:1px solid var(--dsh-hairline);border-radius:8px;
-  box-sizing:border-box;overflow:hidden}
-.dsh-canvas-skeleton2d-timeline{display:block;width:100%;height:100%;touch-action:none;cursor:pointer}
-.dsh-canvas-skeleton2d-group{border:1px solid var(--dsh-hairline);border-radius:8px;padding:8px 10px}
-.dsh-canvas-skeleton2d-title{display:flex;align-items:center;justify-content:space-between;gap:8px;
-  font:600 11px/16px var(--dsh-font);color:var(--dsh-fg-2);margin-bottom:4px}
-.dsh-canvas-skeleton2d-row{display:flex;align-items:center;gap:8px;padding:2px 0}
-.dsh-canvas-skeleton2d-parent{flex:1 1 auto;min-width:0;height:24px;padding:0 4px;border:1px solid var(--dsh-mid);border-radius:6px;
-  background:var(--dsh-card);color:var(--dsh-fg);font:11px/22px var(--dsh-font)}
-.dsh-canvas-skeleton2d-key{flex:none;width:34px;font:11px/16px var(--dsh-font);color:var(--dsh-fg-3)}
-.dsh-canvas-skeleton2d-slider{flex:1;min-width:0;accent-color:var(--dsh-breeze)}
-.dsh-canvas-skeleton2d-value{flex:none;width:46px;text-align:right;font:11px/16px var(--dsh-mono);color:var(--dsh-fg-2)}
-.dsh-canvas-skeleton2d-step{display:inline-flex;align-items:center;gap:6px;margin-left:auto}
-.dsh-canvas-skeleton2d-step .dsh-canvas-skeleton2d-value{width:auto;min-width:20px;text-align:center}
-.dsh-canvas-skeleton2d-hint{font:11px/16px var(--dsh-font);color:var(--dsh-fg-3)}
-.dsh-canvas-skeleton2d-coords{font:11px/16px var(--dsh-mono);color:var(--dsh-fg-3)}
-.dsh-canvas-skeleton2d-status{min-height:16px;font:11px/16px var(--dsh-font);color:var(--dsh-fg-3);text-align:right}
 /* 音频面板：一段音频没有画面，铺满只会得到一片空白，所以这里是**一列**——播放条
    占满宽度、文件名在它下面。flex:0 0 auto 让这一列在面板中央按内容高度收拢。 */
 .dsh-canvas-media-audio{flex-direction:column;gap:10px;flex:0 0 auto}

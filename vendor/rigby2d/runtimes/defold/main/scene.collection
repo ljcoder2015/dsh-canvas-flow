@@ -1,5 +1,0 @@
-name: "scene"
-instances {
-  id: "scene"
-  prototype: "/main/scene.go"
-}

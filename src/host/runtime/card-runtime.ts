@@ -74,15 +74,6 @@ import {
   normalizeMediaParams,
 } from '../../core/media/editing.ts'
 import { siblingPathOf } from '../../core/canvas/card/sibling-path.ts'
-import {
-  DEFAULT_LOOP_SECONDS,
-  DEFAULT_MOTIONS,
-  SKELETON2D_FORMAT,
-  SKELETON2D_VERSION,
-  defaultTexturePathOf,
-  serializeSkeleton2dModel,
-  textureReferenceOf,
-} from '../../core/skeleton2d/model.ts'
 import { artifactFolderPathOf, artifactPathOf, settleArtifactPath } from '../../core/canvas/project/artifact-folders.ts'
 import { materialUpstreams } from '../../core/canvas/board/source-store.ts'
 import type { BoardFile } from './board-file.ts'
@@ -289,9 +280,9 @@ export class CardRuntime extends TypertRemoteService {
     let bound = file
     if (spawnStem !== undefined && spawnStem !== '') {
       const base = basenameOf(file)
-      // 词干是客户端照它自己算出的路径带来的；扩展名从 file 上剥词干前缀拿——
-      // `动画卡1` + `动画卡1.skeleton2d.json` → `.skeleton2d.json`（双扩展名原样保住）。
+      // 词干是客户端照它自己算出的路径带来的；扩展名从 file 上剥词干前缀拿。
       // 前缀对不上说明调用方给的词干与路径不是同一句话，那就只信路径、退回单扩展名。
+      // 从词干剥能把多段扩展名原样保住。
       const extension = base.startsWith(spawnStem) ? base.slice(spawnStem.length) : extensionOf(base)
       bound = await settleArtifactPath({
         kind,
@@ -1638,58 +1629,6 @@ export class CardRuntime extends TypertRemoteService {
     return this.runGeneration(project, cardId, signal, (file, model) =>
       generate({ project, file, ...options, ...(model === undefined ? {} : { model }) }, signal),
     )
-  }
-
-  /**
-   * Generate a skeleton2d model artifact for one card (`canvas_generate_skeleton2d`).
-   *
-   * 产物是「一份 JSON + 一张贴图」：贴图来自引用（不复制）或现场生图；分层与骨架由
-   * 客户端打开时自动补上（`autoRig` 标记），因为切图要读像素、而宿主侧没有图像解码。
-   *
-   * 这张卡的产物是**一份 JSON**，但它不是「从文本生成的文本」——它包着一张贴图。贴图
-   * 两个来源，二选一：
-   *
-   * - **引用进来的上游图片直接用**（引用即数据，不复制）：画布上连的那条边说「这张图是
-   *   材料」，模型文件里就以相对引用指向它。上游换了图（重新生成），这张卡下一次渲染
-   *   读到的是新图——引用的语义照旧成立。
-   * - **没有引用就走生图路线现画一张**，落在模型同目录、同词干的 `.png` 上
-   *   （`defaultTexturePathOf`）：整张卡连图带模型搬一次目录就搬全了。
-   *
-   * 走 `runGeneration` 而不是自己拼：产物落盘后的形态重读、失败变 `reason`、卡片选定
-   * 的生成模型传下去——这三件事是「一次生成落进一张卡」的全部内容，写第二遍就是第二份
-   * 会漂移的实现。
-   */
-  async generateSkeleton2d(
-    project: Project,
-    cardId: CardId,
-    prompt: string,
-    referencePath: string | undefined,
-    signal?: AbortSignal,
-  ): Promise<GenerationResult> {
-    return this.runGeneration(project, cardId, signal, async (file, model) => {
-      const texturePath = referencePath ?? defaultTexturePathOf(file)
-      if (referencePath === undefined) {
-        const generate = this.deps.capabilities?.generateImage
-        if (generate === undefined) throw new Error(UNSUPPORTED_IMAGE)
-        await generate({ project, file: texturePath, prompt, ...(model === undefined ? {} : { model }) }, signal)
-      }
-      const artifact = serializeSkeleton2dModel({
-        format: SKELETON2D_FORMAT,
-        version: SKELETON2D_VERSION,
-        texture: textureReferenceOf(file, texturePath),
-        loop: DEFAULT_LOOP_SECONDS,
-        anchor: { x: 0.5, y: 1 },
-        breath: { ...DEFAULT_MOTIONS.breath },
-        sway: { ...DEFAULT_MOTIONS.sway },
-        tilt: { ...DEFAULT_MOTIONS.tilt },
-        // 自动分层留给客户端：分层要读像素，宿主没有解码依赖；标记随模型落盘，编辑器
-        // 一打开就跑一次（`skeleton2d-autorig.ts`），跑完标记消失。
-        autoRig: true,
-        prompt,
-      })
-      await this.deps.io.write(project.root, file, artifact, undefined, signal)
-      return { path: texturePath }
-    })
   }
 
   /**

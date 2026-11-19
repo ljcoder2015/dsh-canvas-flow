@@ -18,7 +18,6 @@ import {
   type ExportOffer,
 } from '../../../../src/client/canvas/export/export-plan.ts'
 import { DESIGN_EXPORT_FORMATS, DESIGN_EXPORT_LABEL } from '../../../../src/client/canvas/export/design-export.ts'
-import { SKELETON2D_EXPORT_FORMATS, SKELETON2D_EXPORT_LABEL } from '../../../../src/client/canvas/export/skeleton2d-export.ts'
 import { TEXT_EXPORT_FORMATS, TEXT_EXPORT_LABEL } from '../../../../src/client/canvas/export/text-export.ts'
 
 /** 一张注入的处理函数表，把每一次落点记下来。 */
@@ -30,7 +29,6 @@ function handlers() {
     text: (format) => calls.push(`text:${format}`),
     design: (format) => calls.push(`design:${format}`),
     media: () => calls.push('media'),
-    skeleton2d: (format) => calls.push(`skeleton2d:${format}`),
   }
   return { calls, face }
 }
@@ -137,21 +135,6 @@ describe('exportOfferOf：形态 → 那枚按钮的去向', () => {
       run(offer, calls)
       expect(calls, kind).toEqual(['media'])
     }
-  })
-
-  it('Skeleton2D 卡给菜单：雪碧图与骨架包是两份不同的东西，不替用户挑', () => {
-    // skeleton2d 的产物是 JSON + 贴图，「原样下载」对它意味着交出去一串引擎读不懂的模型。
-    // 它自己的两条路都在浏览器里烘（skeleton2d-export.ts）：雪碧图逐像素一致、骨架包可编辑。
-    // 两份给的**不是同一个东西**，所以说不出哪个是默认——菜单，与文本四种格式同一个判断。
-    const { calls, face } = handlers()
-
-    const offer = exportOfferOf('skeleton2d', face)
-
-    expect(offer.kind).toBe('menu')
-    run(offer, calls)
-    expect(calls).toEqual(SKELETON2D_EXPORT_FORMATS.map((format) => `skeleton2d:${format}`))
-    // 行的文案必须真的在字典里（`CanvasKey` 只保证形状，这里保证它有对应的两个字典条目）。
-    for (const row of offer.kind === 'menu' ? offer.rows : []) expect(SKELETON2D_EXPORT_LABEL[row.id as 'sheet']).toBe(row.label)
   })
 
   it('其余形态仍走部署那条线，格式取类型表里的第一个', () => {

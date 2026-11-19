@@ -73,9 +73,6 @@ import {
 } from '../asset/notice.ts'
 import { importFromFile } from '../asset/import-file.ts'
 import { mediaExportPlanOf } from '../export/media-export.ts'
-import { exportSkeleton2dDragonBones, exportSkeleton2dSpritesheet, loadSkeleton2dTexture, type Skeleton2dExportFormat } from '../export/skeleton2d-export.ts'
-import { markdownImageSrc } from '../../artifact/viewers/markdown-image.ts'
-import { normalizeSkeleton2dModel } from '../../../core/skeleton2d/model.ts'
 import { exportOfferOf, type ExportOffer } from '../export/export-plan.ts'
 import { exportDesign, type DesignExportFormat } from '../export/design-export.ts'
 import { loadDesignEngine } from '../../artifact/viewers/design/design-engine-module.ts'
@@ -187,7 +184,6 @@ const DOCK_SPECS: readonly DockSpec[] = [
   { label: 'canvas.dock.image', extension: 'png', kind: 'image' },
   { label: 'canvas.dock.video', extension: 'mp4', kind: 'video' },
   { label: 'canvas.dock.audio', extension: 'mp3', kind: 'audio' },
-  { label: 'canvas.dock.skeleton2d', extension: 'skeleton2d.json', kind: 'skeleton2d' },
 ]
 
 /**
@@ -1003,68 +999,6 @@ export function CanvasBoard(props: CanvasBoardProps) {
   )
 
   /**
-   * Skeleton2D 卡的导出：两条出路，读的东西**同一条**（`readArtifact` 拿模型 JSON，贴图走
-   * 工作区路由），只是最后烘的东西不同（F10.1）。
-   *
-   * - `sheet`：逐帧渲染雪碧图（与卡面 / 全屏同一份变形算术），呼吸那几层全在；
-   * - `bones`：DragonBones 骨架包，带蒙皮权重与骨骼动画——没绑骨骼就不导，直说下一步。
-   *
-   * 不走部署那条导出接缝：帧是浏览器里渲染出来的，zip 也在浏览器里压，
-   * `dsh-canvas.capabilities` 有没有导出实现都无所谓。
-   *
-   * 被拒照实说：产物还没写、JSON 读不懂、贴图不在——三种都是界面上一句话的事，不是异常。
-   */
-  const exportSkeleton2dCard = useCallback(
-    (card: BoardCard, format: Skeleton2dExportFormat) => {
-      if (projectId === '') return
-      setError('')
-      setNotice(null)
-      void (async () => {
-        const view = await bridge.readArtifact(projectId, card.id)
-        if (!view.present || view.text === '') {
-          setNotice({ text: t('canvas.export.absent'), tone: 'warn' })
-          return
-        }
-        try {
-          const model = normalizeSkeleton2dModel(JSON.parse(view.text) as Record<string, unknown>)
-          if (model === undefined) {
-            setNotice({ text: t('canvas.export.mediaFailed', { reason: '模型 JSON 读不懂；先重新生成一次这张卡' }), tone: 'warn' })
-            return
-          }
-          // 骨架这条要先看有没有骨骼：没骨骼时连贴图都不用读，直接把下一步说清。
-          if (format === 'bones' && (model.bones === undefined || model.bones.length === 0)) {
-            setNotice({ text: t('canvas.export.skeleton2dBonesAbsent'), tone: 'warn' })
-            return
-          }
-          const textureUrl = markdownImageSrc(projectId, view.file === '' ? card.file : view.file, model.texture)
-          if (textureUrl === undefined) {
-            setNotice({ text: t('canvas.export.mediaFailed', { reason: `贴图引用「${model.texture}」不在项目里` }), tone: 'warn' })
-            return
-          }
-          const image = await loadSkeleton2dTexture(textureUrl)
-          if (image === null) {
-            setNotice({ text: t('canvas.export.mediaFailed', { reason: `贴图加载失败（${model.texture} 可能已被删除或移走）` }), tone: 'warn' })
-            return
-          }
-          if (format === 'bones') {
-            const outcome = await exportSkeleton2dDragonBones(model, image, card.name, downloadBytes)
-            setNotice({
-              text: t('canvas.export.skeleton2dBonesDone', { name: outcome.name, bones: String(outcome.bones), count: String(outcome.frames) }),
-              tone: 'ok',
-            })
-            return
-          }
-          const outcome = await exportSkeleton2dSpritesheet(model, image, card.name, downloadBytes)
-          setNotice({ text: t('canvas.export.skeleton2dDone', { name: outcome.name, count: String(outcome.frames) }), tone: 'ok' })
-        } catch (error) {
-          setNotice({ text: t('canvas.export.bundleFailed', { reason: error instanceof Error ? error.message : String(error) }), tone: 'error' })
-        }
-      })().catch(report)
-    },
-    [bridge, projectId, report, t],
-  )
-
-  /**
    * 文本节点的导出：md / txt / docx / pdf，四种都在浏览器里生成。
    *
    * 不走宿主那条导出接缝——文本节点的产物就是它自己的文字，转换与落盘客户端都做得了
@@ -1182,9 +1116,8 @@ export function CanvasBoard(props: CanvasBoardProps) {
       text: (format) => exportTextCard(card, format),
       design: (format) => exportDesignCard(card, format),
       media: () => exportMediaCard(card),
-      skeleton2d: (format) => exportSkeleton2dCard(card, format),
     })
-  }, [exportBundleCard, exportDesignCard, exportHostCard, exportSkeleton2dCard, exportMediaCard, exportTextCard, selectionCard, summaries])
+  }, [exportBundleCard, exportDesignCard, exportHostCard, exportMediaCard, exportTextCard, selectionCard, summaries])
 
   // ── card composer ─────────────────────────────────────────────────────────
 

@@ -171,51 +171,6 @@ describe('媒体卡的预设（F2.7）', () => {
   })
 })
 
-describe('Skeleton2D 卡的预设（F2.7 第四种产物）', () => {
-  it('指向自己的生成工具，并交代「微调动作 = 编辑 JSON」这一条与媒体相反的路', () => {
-    const text = sectionTextOf('skeleton2d')
-    expect(text).toContain(`\`${TOOL_NAMES.generateSkeleton2d}\``)
-    expect(text).toContain('canvas_card_id')
-    // 产物是 JSON 文本：文件工具在这里**是**正道，与媒体三态那句「not text」相反。
-    expect(text).toContain('skeleton2d-lite model')
-    expect(text).toContain('edit the JSON')
-    // 拍数保持整数——无缝循环的性质靠它，模型写歪导出就有跳变。
-    expect(text).toContain('integer')
-  })
-
-  it('讲游戏素材的话（v2.11）：角色报动作名，特效是循环器，并交代动作落在哪些字段', () => {
-    const text = sectionTextOf('skeleton2d')
-    // 游戏动词必须原样出现——用户说「待机/跑动/攻击」，预设就得接得住这三个词。
-    expect(text).toContain('idle')
-    expect(text).toContain('run')
-    expect(text).toContain('attack')
-    expect(text).toContain('待机')
-    expect(text).toContain('跑动')
-    expect(text).toContain('攻击')
-    // 特效与物件两态也要点名，别让模型以为只有人物能做。
-    expect(text).toContain('fire')
-    expect(text).toContain('props')
-    // 动作 → 字段的映射要指名道姓：节奏在 loop、体态在 motions、肢体在 boneTracks。
-    expect(text).toContain('`loop`')
-    expect(text).toContain('`motions.breath/sway/tilt`')
-    expect(text).toContain('`boneTracks`')
-    // 骨骼名必须是自动分层真的给得出的名字——写一个编出来的名，模型改 JSON 就改了个寂寞。
-    expect(text).toContain('leg.l.1')
-    expect(text).toContain('arm.r.1')
-    // 生成落盘是待机档，更强的动作是事后改 JSON——这条要明说，别让模型以为工具直接出跑动。
-    expect(text).toContain('idle-grade defaults')
-    // 旋转轨道的取值域与换算写实话：v ∈ [-1,1] → ±0.4 rad。
-    expect(text).toContain('0.4 rad')
-  })
-
-  it('不带媒体三态的生成工具名', () => {
-    const text = sectionTextOf('skeleton2d')
-    expect(text).not.toContain(TOOL_NAMES.generateImage)
-    expect(text).not.toContain(TOOL_NAMES.generateVideo)
-    expect(text).not.toContain(TOOL_NAMES.generateAudio)
-  })
-})
-
 describe('文本卡的图文引导（v1.92）', () => {
   it('带「图文并茂」的纪律：先有图再有引用，路径相对本文件', () => {
     const text = sectionTextOf('markdown')
